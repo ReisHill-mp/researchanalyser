@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams } from 'next/navigation'
 import { AppShell } from '@/components/app-shell'
 import { ProjectOverview } from '@/components/project/project-overview'
 import { ProjectMaterials } from '@/components/project/project-materials'
@@ -32,6 +32,7 @@ const tabs = [
 
 export default function ProjectDetailPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
   const [activeTab, setActiveTab] = useState('overview')
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
@@ -68,6 +69,13 @@ export default function ProjectDetailPage() {
 
     fetchProject()
   }, [params.id])
+
+  useEffect(() => {
+    const requestedTab = searchParams.get('tab')
+    if (requestedTab && tabs.some((tab) => tab.id === requestedTab)) {
+      setActiveTab(requestedTab)
+    }
+  }, [searchParams])
 
   const renderTabContent = () => {
     if (!project) return null

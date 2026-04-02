@@ -48,28 +48,27 @@ export function StepConnectUserTesting({ formData, updateFormData, projectId }: 
     updateFormData({ authState: 'connecting' })
 
     try {
-      // Build a list of mock-discovered sessions based on the URL
-      // In production this would call a scraper/browser-automation service
-      // For now we generate placeholder sessions that will be persisted to the DB
-      const mockSessions = Array.from({ length: 6 }, (_, i) => ({
-        session_id: `session-${Date.now()}-${i}`,
-        username: `Participant ${i + 1}`,
-        video_length: `${10 + i} min`,
-        session_url: `${formData.sessionsUrl}/${i + 1}`,
-      }))
-
       const res = await fetch(`/api/projects/${projectId}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionsUrl: formData.sessionsUrl,
-          sessions: mockSessions,
         }),
       })
 
+      const contentType = res.headers.get('content-type') || ''
+      const payload = contentType.includes('application/json')
+        ? await res.json().catch(() => null)
+        : await res.text().catch(() => '')
+
       if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'Failed to save sessions')
+        if (payload && typeof payload === 'object' && 'error' in payload) {
+          throw new Error(String(payload.error))
+        }
+
+        const textPayload = typeof payload === 'string' ? payload : ''
+        const cleaned = textPayload.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+        throw new Error(cleaned || 'Failed to save sessions')
       }
 
       // Don't set sessionCount from response - it will be fetched from DB
@@ -234,7 +233,7 @@ export function StepConnectUserTesting({ formData, updateFormData, projectId }: 
                   <p className="text-sm font-medium text-foreground">Session Discovery</p>
                   <p className="text-xs text-muted-foreground">
                     {formData.authState === 'connected'
-                      ? 'Sessions saved to database (check Ingest step for count)'
+                      ? 'Discovery not run yet. Run import in the next step to fetch real sessions.'
                       : 'Pending connection'}
                   </p>
                 </div>

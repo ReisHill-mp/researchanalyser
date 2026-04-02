@@ -42,10 +42,15 @@ interface ImportTranscript {
 }
 
 interface ImportResultsPayload {
-  sessions: ImportSession[]
-  transcripts: ImportTranscript[]
+  sessions?: ImportSession[]
+  transcripts?: ImportTranscript[]
   status?: 'running' | 'complete' | 'failed'
   errorMessage?: string
+  currentStep?: string
+  currentUser?: string
+  progressLog?: string[]
+  discoveredCount?: number
+  importedCount?: number
 }
 
 /**
@@ -91,21 +96,6 @@ export async function POST(
   try {
     const body = (await request.json()) as ImportResultsPayload
 
-    // Validate payload
-    if (!body.sessions || !Array.isArray(body.sessions)) {
-      return Response.json(
-        { error: 'sessions array is required' },
-        { status: 400 }
-      )
-    }
-
-    if (!body.transcripts || !Array.isArray(body.transcripts)) {
-      return Response.json(
-        { error: 'transcripts array is required' },
-        { status: 400 }
-      )
-    }
-
     const supabase = createClient()
 
     // 1. Verify project exists
@@ -140,20 +130,50 @@ export async function POST(
 
     // 3. Update import run to 'running' status
     if (importRunId) {
+      const progressUpdate = {
+        status: body.status === 'failed' ? 'failed' : 'running',
+        current_step: body.currentStep ?? null,
+        current_user: body.currentUser ?? null,
+        progress_log: body.progressLog ?? [],
+        discovered_count: body.discoveredCount ?? 0,
+        imported_count: body.importedCount ?? 0,
+        error_message: body.status === 'failed' ? body.errorMessage || 'Import failed' : null,
+        completed_at: body.status === 'failed' ? new Date().toISOString() : null,
+      }
+
       const { error: updateRunError } = await supabase
         .from('import_runs')
-        .update({
-          status: 'running',
-          updated_at: new Date().toISOString(),
-        })
+        .update(progressUpdate)
         .eq('id', importRunId)
 
       if (updateRunError) {
         return Response.json(
-          { error: 'Failed to update import run' },
+          { error: 'Failed to update import run', details: updateRunError.message },
           { status: 500 }
         )
       }
+    }
+
+    if (body.status === 'running') {
+      return Response.json({ success: true, status: 'running' }, { status: 200 })
+    }
+
+    if (body.status === 'failed') {
+      return Response.json({ success: true, status: 'failed' }, { status: 200 })
+    }
+
+    if (!body.sessions || !Array.isArray(body.sessions)) {
+      return Response.json(
+        { error: 'sessions array is required' },
+        { status: 400 }
+      )
+    }
+
+    if (!body.transcripts || !Array.isArray(body.transcripts)) {
+      return Response.json(
+        { error: 'transcripts array is required' },
+        { status: 400 }
+      )
     }
 
     try {
@@ -184,8 +204,8 @@ export async function POST(
         project_id: projectId,
         session_id: transcript.sessionId,
         participant_id: transcript.participantId,
-        content: transcript.transcript,
-        imported_at: new Date().toISOString(),
+        transcript: transcript.transcript,
+        created_at: new Date().toISOString(),
       }))
 
       if (transcriptsToInsert.length > 0) {
@@ -208,10 +228,9 @@ export async function POST(
           .from('import_runs')
           .update({
             status: 'complete',
-            discovered_session_count: body.sessions.length,
-            imported_transcript_count: body.transcripts.length,
+            discovered_count: body.sessions.length,
+            imported_count: body.transcripts.length,
             completed_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
           })
           .eq('id', importRunId)
 
@@ -239,7 +258,6 @@ export async function POST(
             error_message:
               error instanceof Error ? error.message : 'Unknown error during import',
             completed_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
           })
           .eq('id', importRunId)
       }

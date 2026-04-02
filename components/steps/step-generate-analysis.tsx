@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -16,25 +17,20 @@ import {
   FileOutput,
   Sparkles,
 } from 'lucide-react'
+import type { AnalysisRun } from '@/lib/queries'
 
 type AnalysisMode = 'descriptive' | 'within-condition' | 'cross-condition' | 'order-effect'
 
-interface AnalysisOutput {
-  id: string
-  name: string
-  status: 'pending' | 'running' | 'complete'
-  icon: React.ReactNode
+interface StepGenerateAnalysisProps {
+  projectId?: string
 }
 
-export function StepGenerateAnalysis() {
+export function StepGenerateAnalysis({ projectId }: StepGenerateAnalysisProps) {
+  const router = useRouter()
   const [selectedModes, setSelectedModes] = useState<AnalysisMode[]>(['descriptive', 'cross-condition'])
-  const [isRunning, setIsRunning] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [outputs, setOutputs] = useState<AnalysisOutput[]>([
-    { id: 'questions', name: 'Question-by-Question Analysis', status: 'pending', icon: <FileText className="h-4 w-4" /> },
-    { id: 'findings', name: 'Findings JSON', status: 'pending', icon: <Database className="h-4 w-4" /> },
-    { id: 'report', name: 'Final Report', status: 'pending', icon: <FileOutput className="h-4 w-4" /> },
-  ])
+  const [analysis, setAnalysis] = useState<AnalysisRun | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
 
   const analysisModes: { value: AnalysisMode; label: string; description: string }[] = [
     {
@@ -65,29 +61,123 @@ export function StepGenerateAnalysis() {
     )
   }
 
-  const handleRunAnalysis = async () => {
-    setIsRunning(true)
-    setProgress(0)
-
-    // Simulate analysis progress
-    const progressSteps = [
-      { progress: 15, output: 'questions', status: 'running' as const },
-      { progress: 40, output: 'questions', status: 'complete' as const },
-      { progress: 55, output: 'findings', status: 'running' as const },
-      { progress: 75, output: 'findings', status: 'complete' as const },
-      { progress: 85, output: 'report', status: 'running' as const },
-      { progress: 100, output: 'report', status: 'complete' as const },
-    ]
-
-    for (const step of progressSteps) {
-      await new Promise((resolve) => setTimeout(resolve, 800))
-      setProgress(step.progress)
-      setOutputs((prev) =>
-        prev.map((o) => (o.id === step.output ? { ...o, status: step.status } : o))
-      )
+  const fetchAnalysis = async () => {
+    if (!projectId) return
+    try {
+      const response = await fetch(`/api/projects/${projectId}/analysis`)
+      if (!response.ok) throw new Error('Failed to fetch analysis status')
+      const data = await response.json()
+      setAnalysis(data)
+    } catch (error) {
+      console.error('Failed to fetch analysis:', error)
     }
+  }
 
-    setIsRunning(false)
+  useEffect(() => {
+    if (!projectId) return
+    fetchAnalysis()
+  }, [projectId])
+
+  useEffect(() => {
+    if (!projectId) return
+    if (!analysis || (analysis.status !== 'queued' && analysis.status !== 'running')) return
+
+    const timer = setInterval(() => {
+      fetchAnalysis().catch((error) => {
+        console.error('Failed to refresh analysis status:', error)
+      })
+    }, 3000)
+
+    return () => clearInterval(timer)
+  }, [projectId, analysis?.status])
+
+  const handleRunAnalysis = async () => {
+    if (!projectId) {
+      setRunError('Project must be created before analysis can run.')
+      return
+    }
+    setLoading(true)
+    setRunError(null)
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/analysis`, {
+        method: 'POST',
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.error || 'Failed to start analysis')
+      }
+
+      await fetchAnalysis()
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : 'Failed to start analysis')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const isRunning = analysis?.status === 'queued' || analysis?.status === 'running'
+  const progress = useMemo(() => {
+    if (!analysis) return 0
+    if (analysis.status === 'queued') return 10
+    if (analysis.status === 'complete') return 100
+    if (analysis.status === 'failed') return 0
+    const completedSteps = analysis.progressLog?.length || 0
+    return Math.min(90, 15 + completedSteps * 18)
+  }, [analysis])
+
+  const outputs = [
+    {
+      id: 'questions',
+      name: 'Question-by-Question Analysis',
+      status:
+        analysis?.status === 'complete'
+          ? 'complete'
+          : isRunning
+          ? 'running'
+          : 'pending',
+      icon: <FileText className="h-4 w-4" />,
+    },
+    {
+      id: 'findings',
+      name: 'Research Findings',
+      status:
+        analysis?.status === 'complete'
+          ? 'complete'
+          : analysis?.currentStep?.toLowerCase().includes('finding')
+          ? 'running'
+          : isRunning
+          ? 'running'
+          : 'pending',
+      icon: <Database className="h-4 w-4" />,
+    },
+    {
+      id: 'report',
+      name: 'Light Insight Report',
+      status:
+        analysis?.status === 'complete'
+          ? 'complete'
+          : analysis?.currentStep?.toLowerCase().includes('report')
+          ? 'running'
+          : isRunning
+          ? 'running'
+          : 'pending',
+      icon: <FileOutput className="h-4 w-4" />,
+    },
+  ] as const
+
+  const handleViewOutput = (outputId: 'questions' | 'findings' | 'report') => {
+    if (!projectId) return
+
+    const tab =
+      outputId === 'questions'
+        ? 'analysis'
+        : outputId === 'report'
+        ? 'report'
+        : 'report'
+
+    router.push(`/projects/${projectId}?tab=${tab}`)
   }
 
   return (
@@ -142,10 +232,10 @@ export function StepGenerateAnalysis() {
           </div>
           <Button
             onClick={handleRunAnalysis}
-            disabled={isRunning || selectedModes.length === 0}
+            disabled={isRunning || loading || selectedModes.length === 0 || !projectId}
             className="gap-2"
           >
-            {isRunning ? (
+            {isRunning || loading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Analyzing...
@@ -158,8 +248,11 @@ export function StepGenerateAnalysis() {
             )}
           </Button>
         </div>
+        {runError && (
+          <p className="text-sm text-destructive mb-4">{runError}</p>
+        )}
 
-        {(isRunning || progress > 0) && (
+        {(analysis || progress > 0) && (
           <div className="space-y-4">
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
@@ -168,6 +261,30 @@ export function StepGenerateAnalysis() {
               </div>
               <Progress value={progress} className="h-2" />
             </div>
+
+            {analysis?.currentStep && (
+              <div className="rounded-lg border border-border bg-muted/20 p-3">
+                <p className="text-sm font-medium text-foreground">{analysis.currentStep}</p>
+                {analysis.errorMessage && (
+                  <p className="text-xs text-destructive mt-1">{analysis.errorMessage}</p>
+                )}
+              </div>
+            )}
+
+            {(analysis?.progressLog?.length || 0) > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Activity
+                </p>
+                <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1">
+                  {analysis?.progressLog?.slice(-6).map((entry, index) => (
+                    <p key={`${entry}-${index}`} className="text-xs text-muted-foreground">
+                      {entry}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Output Cards */}
             <div className="space-y-2 pt-2">
@@ -212,7 +329,11 @@ export function StepGenerateAnalysis() {
                     </p>
                   </div>
                   {output.status === 'complete' && (
-                    <Button variant="ghost" size="sm">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleViewOutput(output.id)}
+                    >
                       View
                     </Button>
                   )}
@@ -229,10 +350,10 @@ export function StepGenerateAnalysis() {
           <Sparkles className="h-4 w-4 shrink-0 mt-0.5" />
           <div>
             <p>
-              <strong className="text-foreground">Model:</strong> GPT-4 Turbo
+              <strong className="text-foreground">Model:</strong> {analysis?.modelVersion || 'Local research synthesizer'}
             </p>
             <p className="mt-1">
-              <strong className="text-foreground">Prompt Version:</strong> v2.4.1
+              <strong className="text-foreground">Prompt Version:</strong> {analysis?.promptVersion || 'ux-researcher-designer-v1'}
             </p>
           </div>
         </div>

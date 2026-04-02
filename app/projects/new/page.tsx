@@ -142,9 +142,9 @@ export default function NewProjectPage() {
       case 5:
         return <StepIngestMap projectId={formData.projectId} />
       case 6:
-        return <StepGenerateAnalysis />
+        return <StepGenerateAnalysis projectId={formData.projectId} />
       case 7:
-        return <StepReviewChat />
+        return <StepReviewChat projectId={formData.projectId} />
       default:
         return null
     }

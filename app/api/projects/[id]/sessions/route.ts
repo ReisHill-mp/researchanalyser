@@ -1,5 +1,23 @@
 import { createClient } from '@/lib/supabase-client'
 
+function normalizeUserTestingSessionsUrl(rawUrl: string) {
+  const value = rawUrl.trim()
+  if (!value) return value
+
+  try {
+    const url = new URL(value)
+
+    if (url.hash.startsWith('#!/study/')) {
+      url.pathname = `${url.pathname.replace(/\/$/, '')}${url.hash.replace('#!', '')}`
+      url.hash = ''
+    }
+
+    return url.toString()
+  } catch {
+    return value
+  }
+}
+
 // GET: fetch all sessions for a project
 export async function GET(
   _request: Request,
@@ -24,7 +42,7 @@ export async function GET(
   }
 }
 
-// POST: save discovered sessions and update the project's usertesting_url
+// POST: save the project's UserTesting URL and optionally upsert discovered sessions
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -34,30 +52,31 @@ export async function POST(
     const body = await request.json()
     const { sessionsUrl, sessions } = body as {
       sessionsUrl: string
-      sessions: { session_id: string; username: string; video_length?: string; session_url?: string }[]
+      sessions?: { session_id: string; username: string; video_length?: string; session_url?: string }[]
     }
 
     if (!sessionsUrl?.trim()) {
       return Response.json({ error: 'sessionsUrl is required' }, { status: 400 })
     }
 
-    if (!Array.isArray(sessions) || sessions.length === 0) {
-      return Response.json({ error: 'sessions array is required' }, { status: 400 })
-    }
+    const normalizedSessionsUrl = normalizeUserTestingSessionsUrl(sessionsUrl)
 
     const supabase = createClient()
 
     // Update the project's usertesting_url
     const { error: projectError } = await supabase
       .from('projects')
-      .update({ usertesting_url: sessionsUrl.trim() })
+      .update({ usertesting_url: normalizedSessionsUrl })
       .eq('id', projectId)
 
     if (projectError) {
       return Response.json({ error: projectError.message }, { status: 500 })
     }
 
-    // Upsert sessions (ignore duplicates)
+    if (!Array.isArray(sessions) || sessions.length === 0) {
+      return Response.json({ saved: 0 }, { status: 200 })
+    }
+
     const rows = sessions.map((s) => ({
       project_id: projectId,
       session_id: s.session_id,

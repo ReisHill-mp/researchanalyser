@@ -15,3 +15,6 @@ node_modules
 .next/
 .DS_Store
 .vercel
+.playwright-cli/
+Bulk import/
+tsconfig.tsbuildinfo

@@ -7,6 +7,7 @@ export interface Transcript {
   projectId: string
   participantId: string
   sessionId: string
+  transcript: string
   condition?: string
   expectedOrder?: number
   actualOrder?: number
@@ -36,6 +37,7 @@ export async function getProjectTranscripts(projectId: string): Promise<Transcri
       projectId: t.project_id,
       participantId: t.participant_id || `P${t.id.slice(0, 4).toUpperCase()}`,
       sessionId: t.session_id,
+      transcript: t.transcript || '',
       condition: t.condition || undefined,
       expectedOrder: t.expected_order || undefined,
       actualOrder: t.actual_order || undefined,
@@ -102,11 +104,12 @@ export async function getProjects(): Promise<Project[]> {
       .order('updated_at', { ascending: false })
 
     if (projectsError) {
-      return mockProjects
+      console.error('Error fetching projects:', projectsError)
+      return []
     }
 
     if (!projects || projects.length === 0) {
-      return mockProjects
+      return []
     }
 
     const projectsWithCounts = await Promise.all(
@@ -146,7 +149,8 @@ export async function getProjects(): Promise<Project[]> {
 
     return projectsWithCounts
   } catch (error) {
-    return mockProjects
+    console.error('Error loading projects:', error)
+    return []
   }
 }
 
@@ -180,9 +184,9 @@ export async function getProjectFindings(projectId: string): Promise<Finding[]> 
       id: f.id,
       projectId: f.project_id,
       title: f.title,
-      description: f.description || '',
-      type: f.type || 'observation',
-      severity: f.severity || undefined,
+      description: f.description || f.summary || f.detail || '',
+      type: f.type || (f.category === 'pain-point' || f.category === 'delighter' || f.category === 'recommendation' ? f.category : 'observation'),
+      severity: f.severity || (f.priority === 'high' ? 'critical' : f.priority === 'medium' ? 'moderate' : f.priority === 'low' ? 'minor' : undefined),
       category: f.category || undefined,
       priority: f.priority || undefined,
       createdAt: f.created_at,
@@ -199,7 +203,15 @@ export interface AnalysisQuestion {
   summary: string
   keyInsights: string[]
   conditionBreakdown: Record<string, string>
-  citations: { quote: string; participantId: string; timestamp?: string }[]
+  citations: {
+    quote: string
+    participantId: string
+    timestamp?: string
+    summary?: string
+    condition?: string
+    transcriptReference?: string
+    sessionId?: string
+  }[]
   participantCount: number
 }
 
@@ -212,9 +224,12 @@ export interface ConditionSummary {
 export interface AnalysisRun {
   id: string
   projectId: string
-  status: 'pending' | 'running' | 'complete' | 'failed'
+  status: 'pending' | 'queued' | 'running' | 'complete' | 'failed'
   modelVersion?: string
   promptVersion?: string
+  currentStep?: string
+  progressLog?: string[]
+  errorMessage?: string
   createdAt: string
   completedAt?: string
   questions: AnalysisQuestion[]
@@ -274,6 +289,9 @@ export async function getProjectAnalysis(projectId: string): Promise<AnalysisRun
       status: analysisRun.status || 'pending',
       modelVersion: analysisRun.model_version || undefined,
       promptVersion: analysisRun.prompt_version || undefined,
+      currentStep: analysisRun.current_step || undefined,
+      progressLog: analysisRun.progress_log || [],
+      errorMessage: analysisRun.error_message || undefined,
       createdAt: analysisRun.created_at,
       completedAt: analysisRun.completed_at || undefined,
       questions,
@@ -453,4 +471,3 @@ export async function updateImportRunStatus(
     return false
   }
 }
-

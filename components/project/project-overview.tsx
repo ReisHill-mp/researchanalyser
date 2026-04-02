@@ -5,9 +5,17 @@ import { formatDistanceToNow } from 'date-fns'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { DeleteProjectDialog } from './delete-project-dialog'
 import {
+  Eye,
   FileText,
   Users,
   Calendar,
@@ -18,7 +26,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import type { Project, StudyType } from '@/lib/types'
-import type { Finding } from '@/lib/queries'
+import type { Finding, Transcript } from '@/lib/queries'
 
 const studyTypeLabels: Record<StudyType, string> = {
   'single-flow': 'Single Flow',
@@ -35,27 +43,41 @@ interface ProjectOverviewProps {
 
 export function ProjectOverview({ project }: ProjectOverviewProps) {
   const [findings, setFindings] = useState<Finding[]>([])
+  const [transcripts, setTranscripts] = useState<Transcript[]>([])
   const [loadingFindings, setLoadingFindings] = useState(true)
+  const [loadingTranscripts, setLoadingTranscripts] = useState(true)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [selectedTranscript, setSelectedTranscript] = useState<Transcript | null>(null)
 
   useEffect(() => {
-    async function fetchFindings() {
+    async function fetchOverviewData() {
       try {
-        const response = await fetch(`/api/projects/${project.id}/report`)
-        if (response.ok) {
-          const data = await response.json()
-          setFindings(data.findings || [])
+        const [reportResponse, transcriptResponse] = await Promise.all([
+          fetch(`/api/projects/${project.id}/report`),
+          fetch(`/api/projects/${project.id}/transcripts`),
+        ])
+
+        if (reportResponse.ok) {
+          const reportData = await reportResponse.json()
+          setFindings(reportData.findings || [])
+        }
+
+        if (transcriptResponse.ok) {
+          const transcriptData = await transcriptResponse.json()
+          setTranscripts(transcriptData || [])
         }
       } catch (error) {
-        console.error('Error fetching findings:', error)
+        console.error('Error fetching project overview data:', error)
       } finally {
         setLoadingFindings(false)
+        setLoadingTranscripts(false)
       }
     }
-    fetchFindings()
+
+    fetchOverviewData()
   }, [project.id])
 
-  const findingsCount = project.findingsCount ?? findings.length
+  const findingsCount = loadingFindings ? project.findingsCount : findings.length
   const topFindings = findings.slice(0, 3)
 
   return (
@@ -129,31 +151,6 @@ export function ProjectOverview({ project }: ProjectOverviewProps) {
         )}
       </Card>
 
-      {/* Study Setup - Test Script and A/B Comparison */}
-      {(project.testScript || project.isABComparison !== undefined) && (
-        <Card className="p-5 border-border bg-card">
-          <h3 className="text-sm font-medium text-foreground mb-4">Study Setup</h3>
-          <div className="space-y-4">
-            {project.isABComparison !== undefined && (
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">A/B Comparison</p>
-                <p className="text-sm font-medium text-foreground mt-1">
-                  {project.isABComparison ? 'Yes, this is an A/B comparison' : 'No, single experience'}
-                </p>
-              </div>
-            )}
-            {project.testScript && (
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Test Script</p>
-                <div className="bg-muted/30 p-3 rounded border border-border text-sm text-foreground max-h-48 overflow-y-auto font-mono text-xs whitespace-pre-wrap">
-                  {project.testScript}
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-
       {/* Status Cards */}
       <div className="grid grid-cols-4 gap-4">
         <Card className="p-4 border-border bg-card">
@@ -207,7 +204,12 @@ export function ProjectOverview({ project }: ProjectOverviewProps) {
       {/* Top Findings */}
       <Card className="p-5 border-border bg-card">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium text-foreground">Top Findings</h3>
+          <div>
+            <h3 className="text-sm font-medium text-foreground">Report Highlights</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Surfaced from the latest report and findings output.
+            </p>
+          </div>
           <Badge variant="secondary">{findingsCount} total</Badge>
         </div>
         {loadingFindings ? (
@@ -297,6 +299,71 @@ export function ProjectOverview({ project }: ProjectOverviewProps) {
         </div>
       </Card>
 
+      <Card className="p-5 border-border bg-card">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-medium text-foreground">Participants in this test</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Browse imported participant transcripts directly from the overview.
+            </p>
+          </div>
+          <Badge variant="secondary">{transcripts.length} total</Badge>
+        </div>
+
+        {loadingTranscripts ? (
+          <div className="flex items-center justify-center py-6">
+            <div className="animate-spin rounded-full h-6 w-6 border border-border border-t-primary"></div>
+          </div>
+        ) : transcripts.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-muted/20 p-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              No participant transcripts have been imported for this project yet.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/30">
+                <tr className="border-b border-border text-left">
+                  <th className="px-4 py-3 font-medium text-foreground">Participant</th>
+                  <th className="px-4 py-3 font-medium text-foreground">Session</th>
+                  <th className="px-4 py-3 font-medium text-foreground">Status</th>
+                  <th className="px-4 py-3 font-medium text-foreground">Imported</th>
+                  <th className="px-4 py-3 font-medium text-foreground text-right">Transcript</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transcripts.map((transcript) => (
+                  <tr key={transcript.id} className="border-b border-border last:border-b-0">
+                    <td className="px-4 py-3 text-foreground">{transcript.participantId}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{transcript.sessionId}</td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline" className="capitalize">
+                        {transcript.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {formatDistanceToNow(new Date(transcript.createdAt), { addSuffix: true })}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => setSelectedTranscript(transcript)}
+                      >
+                        <Eye className="h-4 w-4" />
+                        View transcript
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
       {/* Delete Project Section */}
       <div className="border-t border-border pt-8 mt-8">
         <Card className="p-5 border-destructive/20 bg-destructive/5">
@@ -328,6 +395,25 @@ export function ProjectOverview({ project }: ProjectOverviewProps) {
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
       />
+      <Dialog open={Boolean(selectedTranscript)} onOpenChange={(open) => !open && setSelectedTranscript(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedTranscript ? `${selectedTranscript.participantId} transcript` : 'Transcript'}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedTranscript ? `Session ${selectedTranscript.sessionId}` : 'Participant transcript'}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedTranscript && (
+            <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-muted/20 p-4">
+              <pre className="whitespace-pre-wrap text-sm leading-relaxed text-foreground font-mono">
+                {selectedTranscript.transcript}
+              </pre>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

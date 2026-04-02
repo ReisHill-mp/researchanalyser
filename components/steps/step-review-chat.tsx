@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -17,11 +17,38 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { mockFindings, mockChatMessages } from '@/lib/mock-data'
+import type { Transcript } from '@/lib/queries'
 
-export function StepReviewChat() {
+interface StepReviewChatProps {
+  projectId?: string
+}
+
+export function StepReviewChat({ projectId }: StepReviewChatProps) {
   const [messages, setMessages] = useState(mockChatMessages)
   const [input, setInput] = useState('')
   const [activeTab, setActiveTab] = useState<'report' | 'findings' | 'transcripts' | 'chat'>('report')
+  const [transcripts, setTranscripts] = useState<Transcript[]>([])
+  const [transcriptsLoading, setTranscriptsLoading] = useState(false)
+
+  useEffect(() => {
+    async function fetchTranscripts() {
+      if (!projectId) return
+      setTranscriptsLoading(true)
+      try {
+        const response = await fetch(`/api/projects/${projectId}/transcripts`)
+        if (!response.ok) throw new Error('Failed to fetch transcripts')
+        const data = await response.json()
+        setTranscripts(data || [])
+      } catch (error) {
+        console.error('Failed to fetch transcripts for review step:', error)
+        setTranscripts([])
+      } finally {
+        setTranscriptsLoading(false)
+      }
+    }
+
+    fetchTranscripts()
+  }, [projectId])
 
   const handleSend = () => {
     if (!input.trim()) return
@@ -173,9 +200,32 @@ export function StepReviewChat() {
 
         {activeTab === 'transcripts' && (
           <Card className="p-4 border-border bg-card">
-            <p className="text-sm text-muted-foreground">
-              Transcript browser would display here with search and filtering capabilities.
-            </p>
+            {transcriptsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading transcripts...</p>
+            ) : transcripts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No transcripts available yet for this project.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {transcripts.map((transcript) => (
+                  <div key={transcript.id} className="rounded-lg border border-border bg-muted/20 p-4">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{transcript.participantId}</p>
+                        <p className="text-xs text-muted-foreground">{transcript.sessionId}</p>
+                      </div>
+                      {transcript.condition && (
+                        <Badge variant="secondary">{transcript.condition}</Badge>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
+                      {transcript.transcript || 'Transcript text missing.'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
         )}
 

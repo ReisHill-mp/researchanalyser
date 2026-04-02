@@ -14,15 +14,6 @@ async function setupDatabase() {
   console.log('Setting up database tables...')
 
   try {
-    // Create projects table
-    console.log('Creating projects table...')
-    const { error: projectsError } = await supabase.rpc('create_projects_table', {}, { 
-      head: false 
-    }).catch(() => {
-      // Table might already exist, which is fine
-      return { error: null }
-    })
-
     // Insert seed data
     console.log('Inserting seed data...')
     const projectsData = [

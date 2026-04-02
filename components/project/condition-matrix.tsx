@@ -25,6 +25,19 @@ import {
 } from 'lucide-react'
 import { StatusBadge, ValidationFlagBadge } from '@/components/status-badge'
 import type { Transcript } from '@/lib/queries'
+import type { ValidationFlag } from '@/lib/types'
+
+const validationFlags: ValidationFlag[] = [
+  'missing-assignment',
+  'order-incomplete',
+  'low-confidence',
+  'quality-issue',
+  'excluded',
+]
+
+function isValidationFlag(value: string): value is ValidationFlag {
+  return validationFlags.includes(value as ValidationFlag)
+}
 
 export function ConditionMatrix() {
   const params = useParams()
@@ -295,8 +308,10 @@ export function ConditionMatrix() {
                       {transcript.validationFlags.length === 0 ? (
                         <CheckCircle2 className="h-4 w-4 text-success" />
                       ) : (
-                        transcript.validationFlags.map((flag) => (
-                          <ValidationFlagBadge key={flag} flag={flag} />
+                        transcript.validationFlags
+                          .filter(isValidationFlag)
+                          .map((flag) => (
+                            <ValidationFlagBadge key={flag} flag={flag} />
                         ))
                       )}
                     </div>

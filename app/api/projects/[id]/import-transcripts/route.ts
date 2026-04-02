@@ -1,8 +1,13 @@
 import { createClient } from '@/lib/supabase-client'
 import { NextRequest, NextResponse } from 'next/server'
+import path from 'node:path'
+import { spawn } from 'node:child_process'
 
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
-  const projectId = params.id
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: projectId } = await params
 
   if (!projectId) {
     return NextResponse.json({ error: 'Project ID required' }, { status: 400 })
@@ -55,7 +60,41 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       )
     }
 
-    // Return success immediately - external worker will handle the actual import
+    // In local/dev usage, automatically kick off the bridge script so the app
+    // does not sit in "queued" forever waiting for a separate manual command.
+    if (process.env.NODE_ENV !== 'production') {
+      const host = request.headers.get('host') || 'localhost:3000'
+      const proto = host.includes('localhost') || host.startsWith('127.0.0.1')
+        ? 'http'
+        : request.headers.get('x-forwarded-proto') || 'https'
+      const appUrl = `${proto}://${host}`
+      const repoRoot = process.cwd()
+      const outputDir = path.join('Bulk import', projectId)
+
+      const child = spawn(
+        'node',
+        [
+          'scripts/import_usertesting_results.js',
+          '--project-id',
+          projectId,
+          '--out',
+          outputDir,
+          '--app-url',
+          appUrl,
+        ],
+        {
+          cwd: repoRoot,
+          env: process.env,
+          detached: true,
+          stdio: 'ignore',
+        }
+      )
+
+      child.unref()
+    }
+
+    // Return success immediately - local dev auto-spawns the bridge script and
+    // production can still rely on an external worker.
     return NextResponse.json(
       {
         success: true,
@@ -73,8 +112,65 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   }
 }
 
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
-  const projectId = params.id
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: projectId } = await params
+
+  if (!projectId) {
+    return NextResponse.json({ error: 'Project ID required' }, { status: 400 })
+  }
+
+  try {
+    const supabase = createClient()
+
+    const { data: latestRun, error: runError } = await supabase
+      .from('import_runs')
+      .select('id, status')
+      .eq('project_id', projectId)
+      .in('status', ['queued', 'running'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (runError || !latestRun) {
+      return NextResponse.json(
+        { error: 'No queued or running import to cancel' },
+        { status: 404 }
+      )
+    }
+
+    const { error: updateError } = await supabase
+      .from('import_runs')
+      .update({
+        status: 'failed',
+        error_message: 'Cancelled by user',
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', latestRun.id)
+
+    if (updateError) {
+      return NextResponse.json(
+        { error: 'Failed to cancel import', details: updateError.message },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({ success: true, cancelled: true })
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to cancel import', details: error instanceof Error ? error.message : 'Unknown error' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: projectId } = await params
 
   if (!projectId) {
     return NextResponse.json({ error: 'Project ID required' }, { status: 400 })

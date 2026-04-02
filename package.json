@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "import-usertesting": "node scripts/import_usertesting_results.js",
+    "inspect-project": "node scripts/inspect_project_state.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

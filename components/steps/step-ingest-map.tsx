@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
 import { Loader2, Users, AlertCircle, FileText, CheckCircle2, Clock, XCircle, RefreshCw } from 'lucide-react'
 
 interface Session {
@@ -14,8 +15,11 @@ interface Session {
 interface ImportRun {
   id: string
   status: 'queued' | 'running' | 'complete' | 'failed'
-  discovered_session_count: number
-  imported_transcript_count: number
+  discovered_count: number
+  imported_count: number
+  current_step?: string | null
+  current_user?: string | null
+  progress_log?: string[] | null
   error_message?: string
   created_at: string
 }
@@ -38,6 +42,7 @@ export function StepIngestMap({ projectId }: StepIngestMapProps) {
   const [isImporting, setIsImporting] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
 
   // Fetch sessions from DB
   const fetchSessions = useCallback(async () => {
@@ -77,6 +82,21 @@ export function StepIngestMap({ projectId }: StepIngestMapProps) {
       .finally(() => setLoading(false))
   }, [projectId, fetchSessions, fetchImportStatus])
 
+  // Poll while import is active so the UI progresses without manual refresh.
+  useEffect(() => {
+    if (!projectId) return
+    const status = importStatus?.importRun?.status
+    if (status !== 'queued' && status !== 'running') return
+
+    const timer = setInterval(() => {
+      Promise.all([fetchSessions(), fetchImportStatus()]).catch((err) => {
+        console.error('Failed to refresh import status:', err)
+      })
+    }, 3000)
+
+    return () => clearInterval(timer)
+  }, [projectId, importStatus?.importRun?.status, fetchSessions, fetchImportStatus])
+
   // Manual refresh to check for worker writeback results
   const handleRefresh = async () => {
     setIsRefreshing(true)
@@ -111,6 +131,29 @@ export function StepIngestMap({ projectId }: StepIngestMapProps) {
     }
   }
 
+  const handleCancelImport = async () => {
+    if (!projectId) return
+    setIsCancelling(true)
+    setImportError(null)
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/import-transcripts`, {
+        method: 'DELETE',
+      })
+
+      if (!res.ok) {
+        const error = await res.json()
+        throw new Error(error.error || 'Failed to cancel import')
+      }
+
+      await Promise.all([fetchSessions(), fetchImportStatus()])
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Failed to cancel import')
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
   const getStatusIcon = (status?: string) => {
     switch (status) {
       case 'queued':
@@ -142,6 +185,19 @@ export function StepIngestMap({ projectId }: StepIngestMapProps) {
 
   // Helper to determine if import is in progress (queued or running)
   const isImportInProgress = importStatus?.importRun?.status === 'queued' || importStatus?.importRun?.status === 'running'
+  const progressPercent = (() => {
+    if (!importStatus?.importRun) return 0
+    if (importStatus.importRun.status === 'complete') return 100
+    if (importStatus.importRun.status === 'queued') return 10
+    if (importStatus.importRun.status !== 'running') return 0
+    const discovered = importStatus.discoveredSessions || importStatus.importRun.discovered_count || 0
+    const imported = importStatus.importedTranscripts || importStatus.importRun.imported_count || 0
+    if (discovered > 0) {
+      return Math.max(15, Math.min(95, Math.round((imported / discovered) * 100)))
+    }
+    return importStatus.importRun.current_user ? 40 : 25
+  })()
+  const progressLog = importStatus?.importRun?.progress_log || []
 
   return (
     <div className="space-y-6">
@@ -215,7 +271,9 @@ export function StepIngestMap({ projectId }: StepIngestMapProps) {
                 )}
                 {importStatus.importRun.status === 'running' && (
                   <p className="text-xs text-muted-foreground mt-1">
-                    Worker is processing transcripts. Click Refresh to check progress.
+                    {importStatus.importRun.current_user
+                      ? `Capturing ${importStatus.importRun.current_user}...`
+                      : 'Worker is processing transcripts. Click Refresh to check progress.'}
                   </p>
                 )}
                 {importStatus.importRun.status === 'complete' && (
@@ -229,9 +287,42 @@ export function StepIngestMap({ projectId }: StepIngestMapProps) {
                 <p className="text-xs text-muted-foreground mt-2">
                   Started: {new Date(importStatus.importRun.created_at).toLocaleString()}
                 </p>
+                {(importStatus.importRun.status === 'queued' || importStatus.importRun.status === 'running') && (
+                  <div className="mt-4 space-y-3">
+                    <Progress value={progressPercent} className="h-2" />
+                    {progressLog.length > 0 && (
+                      <div className="rounded-md border border-border bg-muted/20 p-3 max-h-32 overflow-y-auto">
+                        <div className="space-y-1">
+                          {progressLog.map((entry, index) => (
+                            <p key={`${entry}-${index}`} className="text-xs text-muted-foreground">
+                              {entry}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
-            {!isImportInProgress && (
+            {isImportInProgress ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleCancelImport}
+                disabled={isCancelling}
+                className="gap-2"
+              >
+                {isCancelling ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Cancelling…
+                  </>
+                ) : (
+                  'Cancel import'
+                )}
+              </Button>
+            ) : (
               <Button
                 size="sm"
                 onClick={handleImportTranscripts}
