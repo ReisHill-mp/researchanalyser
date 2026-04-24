@@ -3,7 +3,7 @@ import { ProjectsList } from '@/components/projects-list'
 
 export default function ProjectsPage() {
   return (
-    <AppShell>
+    <AppShell hideHeader>
       <ProjectsList />
     </AppShell>
   )

@@ -57,6 +57,8 @@ export function ProjectMaterials() {
     )
   }
 
+  const isModerated = project.studyType === 'moderated-test'
+
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -73,9 +75,13 @@ export function ProjectMaterials() {
               <FileText className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h3 className="text-sm font-medium text-foreground">User Test Script</h3>
+              <h3 className="text-sm font-medium text-foreground">
+                {isModerated ? 'Research Inputs' : 'User Test Script'}
+              </h3>
               <p className="text-xs text-muted-foreground">
-                The script used to frame participant tasks and question-by-question analysis.
+                {isModerated
+                  ? 'The guide, objectives, and upfront context used to ground the later research analysis.'
+                  : 'The script used to frame participant tasks and question-by-question analysis.'}
               </p>
             </div>
           </div>
@@ -140,7 +146,11 @@ export function ProjectMaterials() {
             <div>
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Comparison Setup</p>
               <p className="text-foreground mt-1">
-                {project.isABComparison ? 'Includes an A/B comparison' : 'Single-flow / non-comparative study'}
+                {project.studyType === 'moderated-test'
+                  ? 'Moderated research workflow'
+                  : project.isABComparison
+                  ? 'Includes an A/B comparison'
+                  : 'Single-flow / non-comparative study'}
               </p>
             </div>
             <div>

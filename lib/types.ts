@@ -3,6 +3,7 @@ export type StudyType =
   | 'concept-test'
   | 'balanced-comparison'
   | 'ab-comparison'
+  | 'moderated-test'
   | 'within-subject'
   | 'between-subject'
 
@@ -57,6 +58,11 @@ export interface Participant {
   excluded?: boolean
 }
 
+export interface BalancedComparisonAssignment {
+  participantId: string
+  orderLabel: 'A-B' | 'B-A'
+}
+
 export interface Finding {
   id: string
   type: 'pain-point' | 'delighter' | 'insight' | 'recommendation'
@@ -79,6 +85,7 @@ export interface Project {
   id: string
   name: string
   studyName: string
+  ownerName?: string
   description: string
   studyType: StudyType
   status: ProjectStatus
@@ -95,6 +102,7 @@ export interface Project {
   conditions?: Condition[]
   balancingMethod?: BalancingMethod
   participants?: Participant[]
+  balancedAssignments?: BalancedComparisonAssignment[]
   findings?: Finding[]
 }
 

@@ -4,57 +4,60 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { AppShell } from '@/components/app-shell'
 import { VerticalStepper } from '@/components/stepper'
-import { StepProjectDetails } from '@/components/steps/step-project-details'
-import { StepTestScript } from '@/components/steps/step-test-script'
-import { StepStudyDesignSimple } from '@/components/steps/step-study-design-simple'
-import { StepConnectUserTesting } from '@/components/steps/step-connect-usertesting'
+import { StepProjectSetup } from '@/components/steps/step-project-setup'
+import { StepTestType } from '@/components/steps/step-test-type'
+import { StepResearchScript } from '@/components/steps/step-research-script'
 import { StepIngestMap } from '@/components/steps/step-ingest-map'
 import { StepGenerateAnalysis } from '@/components/steps/step-generate-analysis'
-import { StepReviewChat } from '@/components/steps/step-review-chat'
+import { StepFinalReport } from '@/components/steps/step-final-report'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 
-const steps = [
-  { id: 1, name: 'Project Details', description: 'Basic information' },
-  { id: 2, name: 'Test Script', description: 'Study materials' },
-  { id: 3, name: 'Study Design', description: 'A/B comparison?' },
-  { id: 4, name: 'Connect UserTesting', description: 'Link sessions' },
-  { id: 5, name: 'Ingest & Map', description: 'Import transcripts' },
-  { id: 6, name: 'Generate Analysis', description: 'Run AI analysis' },
-  { id: 7, name: 'Review & Ask', description: 'Explore findings' },
-]
-
 export interface ProjectFormData {
-  // Step 1: Project Details
   projectName: string
-  studyName: string
+  ownerName: string
   description: string
   tags: string[]
-
-  // Step 2: Test Script
   testScript: string
-
-  // Step 3: Study Design
   isABComparison: boolean
-
-  // Step 4: Connect
+  studyType: 'single-flow' | 'balanced-comparison' | 'moderated-test'
   sessionsUrl: string
   authState: 'disconnected' | 'connecting' | 'connected' | 'error'
-
-  // Created project id (set after project is saved to DB)
   projectId?: string
 }
 
 const initialFormData: ProjectFormData = {
   projectName: '',
-  studyName: '',
+  ownerName: '',
   description: '',
   tags: [],
   testScript: '',
   isABComparison: false,
+  studyType: 'single-flow',
   sessionsUrl: '',
   authState: 'disconnected',
   projectId: undefined,
+}
+
+function getWorkflowSteps(studyType: ProjectFormData['studyType']) {
+  const isModerated = studyType === 'moderated-test'
+
+  return [
+    { id: 1, name: 'Project Setup', description: 'Basic project details' },
+    { id: 2, name: 'Test Type', description: 'Choose the research format' },
+    {
+      id: 3,
+      name: isModerated ? 'Research Inputs' : 'Research Script',
+      description: isModerated ? 'Guide, objectives, and upfront context' : 'Script and study materials',
+    },
+    { id: 4, name: 'Transcripts', description: 'Automatic or manual collection' },
+    {
+      id: 5,
+      name: isModerated ? 'Research Analysis' : 'Analysis',
+      description: isModerated ? 'Theme-led research synthesis' : 'Per-question, per-user synthesis',
+    },
+    { id: 6, name: 'Report', description: 'Review final outputs' },
+  ]
 }
 
 export default function NewProjectPage() {
@@ -63,28 +66,33 @@ export default function NewProjectPage() {
   const [formData, setFormData] = useState<ProjectFormData>(initialFormData)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
+  const steps = getWorkflowSteps(formData.studyType)
 
   const updateFormData = (updates: Partial<ProjectFormData>) => {
     setFormData((prev) => ({ ...prev, ...updates }))
   }
 
-  // Create project in DB when moving from step 3 to step 4
-  // so that step 4 and step 5 have a real project_id to work with
   const handleNext = async () => {
     if (currentStep === 3 && !formData.projectId) {
       setIsCreatingProject(true)
       setSubmitError(null)
       try {
+        const tags = [...formData.tags]
+        const modeTag = formData.studyType === 'moderated-test' ? 'moderated' : 'unmoderated'
+        if (!tags.includes(modeTag)) tags.push(modeTag)
+
         const response = await fetch('/api/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             projectName: formData.projectName,
-            studyName: formData.studyName,
+            studyName: formData.projectName,
+            ownerName: formData.ownerName,
             description: formData.description,
-            tags: formData.tags,
+            tags,
             testScript: formData.testScript,
             isABComparison: formData.isABComparison,
+            studyType: formData.studyType,
             sessionsUrl: '',
           }),
         })
@@ -93,7 +101,10 @@ export default function NewProjectPage() {
           throw new Error(err.error || 'Failed to create project')
         }
         const project = await response.json()
-        updateFormData({ projectId: project.id })
+        updateFormData({
+          projectId: project.id,
+          sessionsUrl: project.usertesting_url || '',
+        })
         setCurrentStep(4)
       } catch (error) {
         setSubmitError(error instanceof Error ? error.message : 'Failed to create project')
@@ -119,32 +130,20 @@ export default function NewProjectPage() {
     }
   }
 
-  const handleCreateProject = async () => {
-    // Project was already created when moving from step 3 to step 4
-    if (formData.projectId) {
-      router.push(`/projects/${formData.projectId}`)
-      return
-    }
-    // Fallback: project wasn't created yet (shouldn't normally happen)
-    setSubmitError('Project setup incomplete. Please go back to step 3 and continue.')
-  }
-
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
-        return <StepProjectDetails formData={formData} updateFormData={updateFormData} />
+        return <StepProjectSetup formData={formData} updateFormData={updateFormData} />
       case 2:
-        return <StepTestScript formData={formData} updateFormData={updateFormData} />
+        return <StepTestType formData={formData} updateFormData={updateFormData} />
       case 3:
-        return <StepStudyDesignSimple formData={formData} updateFormData={updateFormData} />
+        return <StepResearchScript formData={formData} updateFormData={updateFormData} />
       case 4:
-        return <StepConnectUserTesting formData={formData} updateFormData={updateFormData} projectId={formData.projectId} />
-      case 5:
         return <StepIngestMap projectId={formData.projectId} />
+      case 5:
+        return <StepGenerateAnalysis projectId={formData.projectId} studyType={formData.studyType} />
       case 6:
-        return <StepGenerateAnalysis projectId={formData.projectId} />
-      case 7:
-        return <StepReviewChat projectId={formData.projectId} />
+        return <StepFinalReport projectId={formData.projectId} studyType={formData.studyType} />
       default:
         return null
     }
@@ -153,15 +152,14 @@ export default function NewProjectPage() {
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        return formData.projectName.trim() !== '' && formData.studyName.trim() !== ''
+        return formData.projectName.trim() !== '' && formData.ownerName.trim() !== ''
       case 2:
-        return formData.testScript.trim() !== ''
+        return formData.studyType.trim() !== ''
       case 3:
-        return formData.projectName.trim() !== '' && formData.testScript.trim() !== ''
+        return formData.testScript.trim() !== ''
       case 4:
       case 5:
       case 6:
-      case 7:
         return true
       default:
         return false
@@ -212,17 +210,7 @@ export default function NewProjectPage() {
               </div>
 
               {currentStep === steps.length ? (
-                <div className="flex items-center gap-3">
-                  {submitError && (
-                    <span className="text-sm text-destructive">{submitError}</span>
-                  )}
-                  <Button
-                    onClick={handleCreateProject}
-                    className="gap-2"
-                  >
-                    Complete Setup
-                  </Button>
-                </div>
+                <div />
               ) : (
                 <Button
                   onClick={handleNext}

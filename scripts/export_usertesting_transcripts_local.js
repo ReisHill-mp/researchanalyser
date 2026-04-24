@@ -28,6 +28,19 @@ function runPw(args) {
   });
 }
 
+function evalInPage(expression) {
+  return runPw(['eval', expression]).trim();
+}
+
+function getCurrentUrl() {
+  try {
+    const output = evalInPage('window.location.href');
+    return output.replace(/^"|"$/g, '').trim();
+  } catch {
+    return '';
+  }
+}
+
 function clickRef(ref) {
   return runPw(['click', ref]);
 }
@@ -70,18 +83,18 @@ function snapshotPage() {
 
 function waitForVideoPage(attempts = 12) {
   for (let i = 0; i < attempts; i += 1) {
-    const snap = snapshotPage();
-    if (snap.pageUrl.includes('/v/')) return snap.pageUrl;
-    sleepMs(1000);
+    const url = getCurrentUrl();
+    if (url.includes('/v/')) return url;
+    sleepMs(500);
   }
   return '';
 }
 
 function waitForUrlChange(previousUrl, attempts = 12) {
   for (let i = 0; i < attempts; i += 1) {
-    const snap = snapshotPage();
-    if (snap.pageUrl && snap.pageUrl !== previousUrl) return snap.pageUrl;
-    sleepMs(1000);
+    const url = getCurrentUrl();
+    if (url && url !== previousUrl) return url;
+    sleepMs(500);
   }
   return '';
 }
@@ -216,14 +229,16 @@ function waitForTranscriptText(attempts = 8) {
     const snap = snapshotPage();
     const fromSnapshot = extractTranscriptFromSnapshot(snap.snapshotText);
     if (fromSnapshot) return fromSnapshot;
-    sleepMs(1000);
+    sleepMs(500);
   }
   return '';
 }
 
-function waitForSessionsPage(attempts = 20) {
+function waitForSessionsPage(attempts = 12) {
   for (let i = 0; i < attempts; i += 1) {
-    dismissCookieBannerIfPresent();
+    if (i === 0 || i === 2) {
+      dismissCookieBannerIfPresent();
+    }
     const snap = snapshotPage();
     const sessionsMeta = parseSessionsPage(snap.snapshotText);
 
@@ -231,7 +246,7 @@ function waitForSessionsPage(attempts = 20) {
       return { snap, sessionsMeta };
     }
 
-    sleepMs(1500);
+    sleepMs(750);
   }
 
   return null;
@@ -247,14 +262,14 @@ function ensureTranscriptReady() {
 
   if (parsed.smartTagsRef) {
     clickRef(parsed.smartTagsRef);
-    sleepMs(750);
+    sleepMs(400);
     snap = snapshotPage();
     parsed = parseTranscriptPage(snap.snapshotText);
   }
 
   if (parsed.deselectAllRef) {
     clickRef(parsed.deselectAllRef);
-    sleepMs(750);
+    sleepMs(400);
     snap = snapshotPage();
     parsed = parseTranscriptPage(snap.snapshotText);
   }
@@ -338,7 +353,7 @@ function main() {
 
   if (url.includes('/sessions')) {
     clickRef(sessionsMeta.playRefs[0]);
-    sleepMs(1000);
+    sleepMs(500);
     const videoUrl = waitForVideoPage();
     if (!videoUrl) {
       throw new Error('The first session did not open into a video page.');

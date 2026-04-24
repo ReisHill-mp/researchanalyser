@@ -86,9 +86,17 @@ export async function POST(
           cwd: repoRoot,
           env: process.env,
           detached: true,
-          stdio: 'ignore',
+          stdio: ['ignore', 'pipe', 'pipe'],
         }
       )
+
+      child.stdout?.on('data', (chunk) => {
+        console.log(`[import:${projectId}] ${chunk.toString().trim()}`)
+      })
+
+      child.stderr?.on('data', (chunk) => {
+        console.error(`[import:${projectId}] ${chunk.toString().trim()}`)
+      })
 
       child.unref()
     }

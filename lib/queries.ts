@@ -18,6 +18,11 @@ export interface Transcript {
   createdAt: string
 }
 
+export interface BalancedComparisonAssignment {
+  participantId: string
+  orderLabel: 'A-B' | 'B-A'
+}
+
 export async function getProjectTranscripts(projectId: string): Promise<Transcript[]> {
   try {
     const supabase = createClient()
@@ -132,6 +137,7 @@ export async function getProjects(): Promise<Project[]> {
           id: project.id,
           name: project.name,
           studyName: project.study_name,
+          ownerName: Array.isArray(project.team) && project.team.length > 0 ? project.team[0] : undefined,
           description: project.description,
           studyType: project.study_type,
           status: project.status,
@@ -200,6 +206,7 @@ export interface AnalysisQuestion {
   id: string
   questionNumber: string
   question: string
+  feedbackGroup?: string
   summary: string
   keyInsights: string[]
   conditionBreakdown: Record<string, string>
@@ -236,6 +243,11 @@ export interface AnalysisRun {
   conditionSummaries: ConditionSummary[]
 }
 
+function parseQuestionOrder(questionNumber: string | null | undefined): number {
+  const match = String(questionNumber || '').match(/\d+/)
+  return match ? Number.parseInt(match[0], 10) : Number.MAX_SAFE_INTEGER
+}
+
 export async function getProjectAnalysis(projectId: string): Promise<AnalysisRun | null> {
   try {
     const supabase = createClient()
@@ -266,16 +278,28 @@ export async function getProjectAnalysis(projectId: string): Promise<AnalysisRun
         .eq('analysis_run_id', analysisRun.id),
     ])
 
-    const questions: AnalysisQuestion[] = (questionsResult.data || []).map((q) => ({
-      id: q.id,
-      questionNumber: q.question_number,
-      question: q.question_text,
-      summary: q.summary || '',
-      keyInsights: q.key_insights || [],
-      conditionBreakdown: q.condition_breakdown || {},
-      citations: q.citations || [],
-      participantCount: q.participant_count || 0,
-    }))
+    const questions: AnalysisQuestion[] = (questionsResult.data || [])
+      .map((q) => ({
+        id: q.id,
+        questionNumber: q.question_number,
+        question: q.question_text,
+        feedbackGroup: q.feedback_group || undefined,
+        summary: q.summary || '',
+        keyInsights: q.key_insights || [],
+        conditionBreakdown: q.condition_breakdown || {},
+        citations: q.citations || [],
+        participantCount: q.participant_count || 0,
+      }))
+      .sort((a, b) => {
+        const aOrder = parseQuestionOrder(a.questionNumber)
+        const bOrder = parseQuestionOrder(b.questionNumber)
+
+        if (aOrder !== bOrder) {
+          return aOrder - bOrder
+        }
+
+        return a.questionNumber.localeCompare(b.questionNumber)
+      })
 
     const conditionSummaries: ConditionSummary[] = (summariesResult.data || []).map((s) => ({
       id: s.id,
@@ -335,11 +359,10 @@ export async function getProjectById(id: string): Promise<Project | null> {
       .single()
 
     if (projectError || !project) {
-      const mockProject = mockProjects.find((p) => p.id === id)
-      return mockProject || null
+      return null
     }
 
-    const [transcriptsResult, findingsResult] = await Promise.all([
+    const [transcriptsResult, findingsResult, assignmentsResult] = await Promise.all([
       supabase
         .from('transcripts')
         .select('*', { count: 'exact', head: true })
@@ -348,15 +371,26 @@ export async function getProjectById(id: string): Promise<Project | null> {
         .from('findings')
         .select('*', { count: 'exact', head: true })
         .eq('project_id', id),
+      supabase
+        .from('balanced_comparison_assignments')
+        .select('participant_id, order_label')
+        .eq('project_id', id),
     ])
 
     const transcriptCount = transcriptsResult.error ? 0 : transcriptsResult.count || 0
     const findingsCount = findingsResult.error ? 0 : findingsResult.count || 0
+    const balancedAssignments: BalancedComparisonAssignment[] = assignmentsResult.error
+      ? []
+      : (assignmentsResult.data || []).map((assignment) => ({
+          participantId: assignment.participant_id,
+          orderLabel: assignment.order_label === 'B-A' ? 'B-A' : 'A-B',
+        }))
 
     return {
       id: project.id,
       name: project.name,
       studyName: project.study_name,
+      ownerName: Array.isArray(project.team) && project.team.length > 0 ? project.team[0] : undefined,
       description: project.description,
       studyType: project.study_type,
       status: project.status,
@@ -368,12 +402,12 @@ export async function getProjectById(id: string): Promise<Project | null> {
       usertestingUrl: project.usertesting_url || undefined,
       testScript: project.test_script || undefined,
       isABComparison: project.is_ab_comparison || false,
+      balancedAssignments,
       createdAt: project.created_at,
       updatedAt: project.updated_at,
     } as Project
   } catch (error) {
-    const mockProject = mockProjects.find((p) => p.id === id)
-    return mockProject || null
+    return null
   }
 }
 

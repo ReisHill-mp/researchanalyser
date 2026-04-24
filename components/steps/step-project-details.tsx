@@ -55,20 +55,6 @@ export function StepProjectDetails({ formData, updateFormData }: StepProjectDeta
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="studyName">Study Name *</Label>
-          <Input
-            id="studyName"
-            placeholder="e.g., Checkout Flow Comparison Study"
-            value={formData.studyName}
-            onChange={(e) => updateFormData({ studyName: e.target.value })}
-            className="bg-secondary border-border"
-          />
-          <p className="text-xs text-muted-foreground">
-            The official name of the UserTesting study
-          </p>
-        </div>
-
-        <div className="space-y-2">
           <Label htmlFor="description">Description</Label>
           <Textarea
             id="description"

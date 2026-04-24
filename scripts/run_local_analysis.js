@@ -82,6 +82,1084 @@ async function postAnalysisResults(appUrl, projectId, payload) {
   return body;
 }
 
+const CROSS_REFERENCE_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          questionNumber: { type: 'string' },
+          questionText: { type: 'string' },
+          feedbackGroup: {
+            type: 'string',
+            enum: ['A', 'B', 'none'],
+          },
+          summary: { type: 'string' },
+          keyInsights: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+          participantCount: { type: 'number' },
+          participantAnalyses: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                participantId: { type: 'string' },
+                sessionId: { type: 'string' },
+                condition: { type: 'string' },
+                summary: { type: 'string' },
+                quote: { type: 'string' },
+                transcriptReference: { type: 'string' },
+              },
+              required: [
+                'participantId',
+                'sessionId',
+                'condition',
+                'summary',
+                'quote',
+                'transcriptReference',
+              ],
+            },
+          },
+        },
+        required: [
+          'questionNumber',
+          'questionText',
+          'feedbackGroup',
+          'summary',
+          'keyInsights',
+          'participantCount',
+          'participantAnalyses',
+        ],
+      },
+    },
+    conditionSummaries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          conditionName: { type: 'string' },
+          summary: { type: 'string' },
+        },
+        required: ['conditionName', 'summary'],
+      },
+    },
+  },
+  required: ['questions', 'conditionSummaries'],
+};
+
+const FINDINGS_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['pain-point', 'delighter', 'insight', 'recommendation'],
+          },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          severity: {
+            type: 'string',
+            enum: ['critical', 'major', 'minor'],
+          },
+          participantCount: { type: 'number' },
+          conditions: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+          tags: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+        },
+        required: [
+          'type',
+          'title',
+          'description',
+          'severity',
+          'participantCount',
+          'conditions',
+          'tags',
+        ],
+      },
+    },
+  },
+  required: ['findings'],
+};
+
+const TRANSCRIPT_CHUNK_SUMMARY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    summary: { type: 'string' },
+    evidenceBullets: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    notableQuotes: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+  required: ['summary', 'evidenceBullets', 'notableQuotes'],
+};
+
+const TRANSCRIPT_DIGEST_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    participantSummary: { type: 'string' },
+    evidenceBullets: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    notableQuotes: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+  required: ['participantSummary', 'evidenceBullets', 'notableQuotes'],
+};
+
+const RESEARCH_CONTEXT_DIGEST_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    studySummary: { type: 'string' },
+    goals: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    focalQuestions: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+  required: ['studySummary', 'goals', 'focalQuestions'],
+};
+
+function extractJsonObject(text) {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error('Model output did not contain a JSON object.');
+  }
+
+  return JSON.parse(text.slice(start, end + 1));
+}
+
+function readStructuredResponseBody(body) {
+  if (!body || typeof body !== 'object') {
+    return null;
+  }
+
+  if (body.output_parsed && typeof body.output_parsed === 'object') {
+    return body.output_parsed;
+  }
+
+  if (typeof body.output_text === 'string' && body.output_text.trim()) {
+    return extractJsonObject(body.output_text);
+  }
+
+  if (!Array.isArray(body.output)) {
+    return null;
+  }
+
+  for (const item of body.output) {
+    if (!item || !Array.isArray(item.content)) continue;
+
+    for (const content of item.content) {
+      if (!content || typeof content !== 'object') continue;
+
+      if (content.parsed && typeof content.parsed === 'object') {
+        return content.parsed;
+      }
+
+      if (typeof content.text === 'string' && content.text.trim()) {
+        try {
+          return extractJsonObject(content.text);
+        } catch {
+          // Keep looking through other content blocks.
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function summarizeResponseShape(body) {
+  if (!body || typeof body !== 'object') {
+    return 'non-object response body';
+  }
+
+  const summary = {
+    status: body.status || null,
+    hasOutputText: typeof body.output_text === 'string' && body.output_text.length > 0,
+    hasOutputParsed: Boolean(body.output_parsed),
+    outputTypes: Array.isArray(body.output)
+      ? body.output.map((item) => ({
+          type: item?.type || null,
+          contentTypes: Array.isArray(item?.content)
+            ? item.content.map((content) => content?.type || 'unknown')
+            : [],
+        }))
+      : [],
+  };
+
+  return JSON.stringify(summary);
+}
+
+function cleanArray(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+}
+
+function cleanObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function isQuestionPrompt(line) {
+  const text = normalizeWhitespace(line);
+  if (!text) return false;
+  if (text.startsWith('http://') || text.startsWith('https://')) return false;
+  if (/^(participant intro|warm-up verbal response|follow up tasks|post-comparison questions|multiple choice|verbal response|intro|task|load|design a|design b|\[.*\]|participant|group)/i.test(text)) {
+    return false;
+  }
+
+  return /\?/.test(text);
+}
+
+function buildAnalysisTargets(testScript, studyType) {
+  const lines = normalizeWhitespace(testScript)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const otherQuestions = [];
+  const balancedQuestions = [];
+  let insideBalancedSection = false;
+  let collectBalancedFollowUps = false;
+
+  for (const line of lines) {
+    if (/^\[balance comparison start\]$/i.test(line)) {
+      insideBalancedSection = true;
+      collectBalancedFollowUps = false;
+      continue;
+    }
+
+    if (/^\[\/balance comparison end\]$/i.test(line)) {
+      insideBalancedSection = false;
+      collectBalancedFollowUps = false;
+      continue;
+    }
+
+    if (insideBalancedSection && /^follow up tasks:?$/i.test(line)) {
+      collectBalancedFollowUps = true;
+      continue;
+    }
+
+    if (!isQuestionPrompt(line)) {
+      continue;
+    }
+
+    if (studyType === 'balanced-comparison' && insideBalancedSection && collectBalancedFollowUps) {
+      balancedQuestions.push(line);
+    } else {
+      otherQuestions.push(line);
+    }
+  }
+
+  if (studyType === 'balanced-comparison') {
+    const targets = [];
+
+    balancedQuestions.forEach((question, index) => {
+      targets.push({
+        questionNumber: `Q${index + 1}`,
+        questionText: question,
+        feedbackGroup: 'A',
+      });
+    });
+
+    balancedQuestions.forEach((question, index) => {
+      targets.push({
+        questionNumber: `Q${index + 1}`,
+        questionText: question,
+        feedbackGroup: 'B',
+      });
+    });
+
+    otherQuestions.forEach((question, index) => {
+      targets.push({
+        questionNumber: `Q${index + 1}`,
+        questionText: question,
+        feedbackGroup: 'none',
+      });
+    });
+
+    return targets;
+  }
+
+  return otherQuestions.map((question, index) => ({
+    questionNumber: `Q${index + 1}`,
+    questionText: question,
+    feedbackGroup: 'none',
+  }));
+}
+
+function buildTranscriptReference(participantId) {
+  return `${sanitizeParticipantId(participantId)}.md`;
+}
+
+function sanitizeParticipantId(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, '');
+}
+
+function clipText(value, max = 220) {
+  const text = normalizeWhitespace(String(value || ''));
+  return text.length <= max ? text : `${text.slice(0, max).trim()}...`;
+}
+
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function buildAnalysisTranscriptContext(transcripts, balancedAssignmentMap, studyType) {
+  return transcripts
+    .map((transcript, index) => {
+      const participantId = transcript.participant_id || `participant-${index + 1}`;
+      const orderLabel = balancedAssignmentMap.get(participantId) || 'Not assigned';
+      return [
+        `Participant: ${participantId}`,
+        `Session ID: ${transcript.session_id || `session-${index + 1}`}`,
+        `Condition: ${transcript.condition || 'All participants'}`,
+        studyType === 'balanced-comparison' ? `Balanced order: ${orderLabel}` : null,
+        'Transcript:',
+        clipText(normalizeWhitespace(transcript.transcript || ''), 2200),
+      ]
+        .filter(Boolean)
+        .join('\n');
+    })
+    .join('\n\n---\n\n');
+}
+
+async function callOpenAiStructured({
+  apiKey,
+  schemaName,
+  schema,
+  systemText,
+  userText,
+  reasoningEffort = 'medium',
+}) {
+  let response;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 240000);
+    try {
+      response = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.4',
+          reasoning: { effort: reasoningEffort },
+          text: {
+            format: {
+              type: 'json_schema',
+              name: schemaName,
+              strict: true,
+              schema,
+            },
+          },
+          input: [
+            {
+              role: 'system',
+              content: [{ type: 'input_text', text: systemText }],
+            },
+            {
+              role: 'user',
+              content: [{ type: 'input_text', text: userText }],
+            },
+          ],
+        }),
+      });
+      clearTimeout(timeout);
+      break;
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error;
+      if (attempt < 3) {
+        await sleep(attempt * 1500);
+      }
+    }
+  }
+
+  if (!response) {
+    throw new Error(
+      `OpenAI request failed before a response was returned after 3 attempts. This often happens when the analysis payload is too large or the network connection was reset. ${
+        lastError instanceof Error ? lastError.message : 'Unknown fetch error.'
+      }`
+    );
+  }
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.error?.message || 'OpenAI generation failed');
+  }
+
+  const refusal = Array.isArray(body.output)
+    ? body.output
+        .flatMap((item) => (Array.isArray(item.content) ? item.content : []))
+        .find((item) => item?.type === 'refusal')
+    : null;
+
+  if (refusal?.refusal) {
+    throw new Error(`Model refused structured output: ${refusal.refusal}`);
+  }
+
+  const parsed = readStructuredResponseBody(body);
+  if (parsed) {
+    return parsed;
+  }
+
+  throw new Error(
+    `Model did not return structured output in the expected format. Response shape: ${summarizeResponseShape(body)}`
+  );
+}
+
+async function generateAiCrossReferenceAnalysisBatch({
+  apiKey,
+  project,
+  transcripts,
+  progressLog,
+  analysisTargets,
+  batchIndex,
+  totalBatches,
+}) {
+  const balancedAssignments = Array.isArray(project.balancedAssignments)
+    ? project.balancedAssignments
+    : [];
+  const balancedAssignmentMap = new Map(
+    balancedAssignments.map((assignment) => [assignment.participantId, assignment.orderLabel])
+  );
+
+  const transcriptContext = buildAnalysisTranscriptContext(
+    transcripts,
+    balancedAssignmentMap,
+    project.study_type
+  );
+
+  const balancedAssignmentContext =
+    project.study_type === 'balanced-comparison'
+      ? balancedAssignments
+          .map(
+            (assignment) =>
+              `- ${assignment.participantId}: ${
+                assignment.orderLabel === 'A-B'
+                  ? 'Saw A first, then B'
+                  : 'Saw B first, then A'
+              }`
+          )
+          .join('\n')
+      : '';
+  const analysisTargetContext = analysisTargets
+    .map((target) => {
+      const sectionLabel =
+        target.feedbackGroup === 'A'
+          ? 'Group A'
+          : target.feedbackGroup === 'B'
+          ? 'Group B'
+          : 'Other questions';
+      return `- ${sectionLabel} ${target.questionNumber}: ${target.questionText}`;
+    })
+    .join('\n');
+
+  const parsed = await callOpenAiStructured({
+    apiKey,
+    schemaName: 'analysis_cross_reference',
+    schema: CROSS_REFERENCE_RESPONSE_SCHEMA,
+    reasoningEffort: 'medium',
+    systemText: [
+      'You are a senior UX researcher.',
+      'Your task is to analyze one research script against all participant transcripts.',
+      'You must generate a rigorous per-question, per-user cross-reference document that can be used as due diligence for a final research report.',
+      'Be evidence-led, avoid vague summaries, and do not invent participant behaviour that is not supported by the transcripts.',
+      'Treat the uploaded research script and transcript set as belonging to the same study unless the transcripts are literally empty or unusable.',
+      'Do not reject the whole dataset because participants paraphrase, skip, combine tasks, or discuss adjacent screens in a different order.',
+      'If evidence is thin for a specific question, say that evidence is limited for that question, but still produce the best grounded summary you can from the transcript.',
+      'Do not write global statements like "do not use these transcripts" or "no valid evidence" unless the transcripts are actually empty, corrupted, or unrelated machine output.',
+      'You must return exactly one question object for every analysis target provided by the user, in the same order, with the same questionNumber, questionText, and feedbackGroup.',
+      'Use the supplied schema exactly.',
+      project.study_type === 'balanced-comparison'
+        ? 'This is a balanced comparison study. You must respect the participant order mapping and separate analysis into Feedback A and Feedback B.'
+        : 'This is not a balanced comparison study. Use feedbackGroup "none" for all questions.',
+    ].join(' '),
+    userText: [
+      'Analyze the following study materials and return structured output that matches the supplied schema.',
+      '',
+      'Requirements:',
+      '- Use the research script as the source of truth for the question structure.',
+      '- Review all transcripts against all questions.',
+      '- Produce per-question, per-user summaries.',
+      '- Each question needs a study-level summary and 1-3 key insights.',
+      '- Each participant summary should be concise, specific, and grounded in the transcript.',
+      '- Use short supporting quotes only when genuinely helpful.',
+      '- Also produce condition summaries.',
+      '- Assume the uploaded study materials are valid inputs for this project and synthesize them accordingly.',
+      '- Do not produce dataset-level rejection language just because evidence is partial, messy, or not perfectly separated by question.',
+      '- When a participant does not answer a question directly, infer only cautiously from nearby transcript evidence and note limited evidence in the summary rather than rejecting the study.',
+      '- Cover every analysis target listed below. Do not collapse multiple targets together or skip the post-comparison questions.',
+      `- This is batch ${batchIndex} of ${totalBatches}. Return exactly ${analysisTargets.length} question objects for this batch.`,
+      project.study_type === 'balanced-comparison'
+        ? '- Because this is a balanced comparison study, set feedbackGroup to "A" or "B" and create separate question summaries for Feedback A and Feedback B.'
+        : '- Set feedbackGroup to "none" for every question.',
+      project.study_type === 'balanced-comparison'
+        ? '- Use the balanced comparison assignment list to interpret each participant transcript correctly so A-feedback and B-feedback are not mixed.'
+        : '',
+      project.study_type === 'balanced-comparison'
+        ? '- Keep questionNumber as Q1, Q2, Q3 within each feedback group.'
+        : '',
+      '',
+      `Project name: ${project.name}`,
+      `Study name: ${project.study_name}`,
+      `Study type: ${project.study_type || 'single-flow'}`,
+      `Transcript count: ${transcripts.length}`,
+      '',
+      'Analysis targets (must all be covered in this order):',
+      analysisTargetContext,
+      '',
+      project.study_type === 'balanced-comparison'
+        ? ['Balanced comparison assignment map:', balancedAssignmentContext, ''].join('\n')
+        : '',
+      'Research script:',
+      normalizeWhitespace(project.analysis_context || project.test_script || ''),
+      '',
+      'Transcripts:',
+      transcriptContext,
+      '',
+      `Progress so far: ${progressLog.join(' | ')}`,
+    ].join('\n'),
+  });
+
+  return parsed;
+}
+
+async function generateAiCrossReferenceAnalysis({ apiKey, project, transcripts, progressLog, postProgress }) {
+  const analysisTargets = buildAnalysisTargets(
+    normalizeWhitespace(project.test_script || ''),
+    project.study_type || 'single-flow'
+  );
+
+  const batchSize = project.study_type === 'moderated-test' ? 4 : 6;
+  const targetBatches = chunkArray(analysisTargets, batchSize);
+  const merged = {
+    questions: [],
+    conditionSummaries: [],
+  };
+
+  for (let batchIndex = 0; batchIndex < targetBatches.length; batchIndex += 1) {
+    if (typeof postProgress === 'function') {
+      await postProgress(
+        `Generating per-question, per-user analysis with GPT-5.4 (${batchIndex + 1} of ${targetBatches.length})`
+      );
+    }
+    const parsed = await generateAiCrossReferenceAnalysisBatch({
+      apiKey,
+      project,
+      transcripts,
+      progressLog,
+      analysisTargets: targetBatches[batchIndex],
+      batchIndex: batchIndex + 1,
+      totalBatches: targetBatches.length,
+    });
+
+    if (Array.isArray(parsed.questions)) {
+      merged.questions.push(...parsed.questions);
+    }
+    if (batchIndex === 0 && Array.isArray(parsed.conditionSummaries)) {
+      merged.conditionSummaries = parsed.conditionSummaries;
+    }
+  }
+
+  return { ...merged, analysisTargets };
+}
+
+function normalizeAiQuestionOutput(parsed, transcripts, analysisTargets) {
+  const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+  const targets = Array.isArray(analysisTargets) ? analysisTargets : [];
+  const normalizedQuestions = questions.map((question, index) => {
+    const target = targets[index];
+    const participantAnalyses = Array.isArray(question.participantAnalyses)
+      ? question.participantAnalyses
+      : [];
+
+    const citations = participantAnalyses.map((participant, participantIndex) => {
+      const participantId =
+        sanitizeParticipantId(participant.participantId) ||
+        sanitizeParticipantId(transcripts[participantIndex]?.participant_id) ||
+        `participant-${participantIndex + 1}`;
+
+      return {
+        quote: clipText(participant.quote || ''),
+        participantId,
+        summary: normalizeWhitespace(participant.summary || ''),
+        condition: participant.condition ? String(participant.condition).trim() : undefined,
+        transcriptReference:
+          String(participant.transcriptReference || '').trim() || buildTranscriptReference(participantId),
+        sessionId: String(participant.sessionId || '').trim() || undefined,
+      };
+    });
+
+    const conditionBreakdown = {};
+    for (const citation of citations) {
+      const condition = citation.condition || 'All participants';
+      if (!conditionBreakdown[condition]) {
+        conditionBreakdown[condition] = `Participants in ${condition} showed a shared pattern around this question that should be read alongside the per-user summaries.`;
+      }
+    }
+
+    return {
+      questionNumber: String(target?.questionNumber || question.questionNumber || `Q${index + 1}`).trim(),
+      questionText: String(target?.questionText || question.questionText || '').trim(),
+      feedbackGroup:
+        target?.feedbackGroup === 'A' || target?.feedbackGroup === 'B'
+          ? target.feedbackGroup
+          : question.feedbackGroup === 'A' || question.feedbackGroup === 'B'
+          ? question.feedbackGroup
+          : undefined,
+      summary: normalizeWhitespace(question.summary || ''),
+      keyInsights: cleanArray(question.keyInsights).slice(0, 3),
+      conditionBreakdown,
+      citations,
+      participantCount:
+        Number(question.participantCount) > 0 ? Number(question.participantCount) : citations.length,
+    };
+  });
+
+  if (targets.length > 0 && normalizedQuestions.length !== targets.length) {
+    throw new Error(
+      `Model returned ${normalizedQuestions.length} question analyses, but the script requires ${targets.length}.`
+    );
+  }
+
+  return normalizedQuestions;
+}
+
+function normalizeAiConditionSummaries(parsed, transcripts) {
+  const provided = Array.isArray(parsed.conditionSummaries) ? parsed.conditionSummaries : [];
+
+  if (provided.length > 0) {
+    return provided
+      .map((item) => ({
+        conditionName: String(item.conditionName || '').trim(),
+        summary: normalizeWhitespace(item.summary || ''),
+      }))
+      .filter((item) => item.conditionName && item.summary);
+  }
+
+  return buildConditionSummaries(transcripts);
+}
+
+function buildCrossReferenceContext(questionAnalyses) {
+  return questionAnalyses
+    .map((question) => {
+      const participantLines = question.citations
+        .map((citation) => {
+          const evidence = citation.quote ? ` Evidence: "${citation.quote}"` : '';
+          return `- ${citation.participantId}: ${citation.summary}${evidence}`;
+        })
+        .join('\n');
+
+      return [
+        `${question.feedbackGroup ? `Feedback ${question.feedbackGroup}` : 'Other'} ${question.questionNumber}: ${question.questionText}`,
+        `Summary: ${question.summary}`,
+        question.keyInsights.length > 0 ? `Key insights: ${question.keyInsights.join(' | ')}` : null,
+        participantLines ? `Participant evidence:\n${participantLines}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    })
+    .join('\n\n');
+}
+
+function splitLargeTranscript(text, maxChars = 12000) {
+  const sections = splitTranscriptSections(text);
+  if (sections.length === 0) return [];
+
+  const chunks = [];
+  let current = '';
+
+  for (const section of sections) {
+    const candidate = current ? `${current}\n\n${section}` : section;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      chunks.push(current);
+      current = '';
+    }
+
+    if (section.length <= maxChars) {
+      current = section;
+      continue;
+    }
+
+    for (let start = 0; start < section.length; start += maxChars) {
+      chunks.push(section.slice(start, start + maxChars));
+    }
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks.filter(Boolean);
+}
+
+async function summarizeTranscriptChunk({
+  apiKey,
+  studyContext,
+  projectName,
+  studyType,
+  participantId,
+  sessionId,
+  chunkText,
+  chunkIndex,
+  totalChunks,
+}) {
+  return callOpenAiStructured({
+    apiKey,
+    schemaName: 'transcript_chunk_summary',
+    schema: TRANSCRIPT_CHUNK_SUMMARY_SCHEMA,
+    reasoningEffort: 'low',
+    systemText: [
+      'You are a senior UX researcher preparing analysis-ready notes from one chunk of a long moderated research transcript.',
+      'Summarize only what is grounded in the chunk.',
+      'Capture the participant reactions, friction, motivations, expectations, and explicit suggestions that matter for later synthesis.',
+      'Do not invent missing detail.',
+      'Use the supplied schema exactly.',
+    ].join(' '),
+    userText: [
+      `Project name: ${projectName}`,
+      `Study type: ${studyType || 'single-flow'}`,
+      `Participant: ${participantId}`,
+      `Session ID: ${sessionId || 'unknown'}`,
+      `Transcript chunk: ${chunkIndex + 1} of ${totalChunks}`,
+      '',
+      'Research inputs / script context:',
+      normalizeWhitespace(studyContext || ''),
+      '',
+      'Transcript chunk:',
+      normalizeWhitespace(chunkText || ''),
+    ].join('\n'),
+  });
+}
+
+async function buildTranscriptDigest({
+  apiKey,
+  studyContext,
+  projectName,
+  studyType,
+  participantId,
+  sessionId,
+  chunkSummaries,
+}) {
+  return callOpenAiStructured({
+    apiKey,
+    schemaName: 'transcript_digest',
+    schema: TRANSCRIPT_DIGEST_SCHEMA,
+    reasoningEffort: 'medium',
+    systemText: [
+      'You are a senior UX researcher combining chunk-level notes from one long moderated transcript into one analysis-ready participant digest.',
+      'Preserve the strongest evidence and keep the digest concise enough to be used in downstream cross-participant synthesis.',
+      'Do not invent details not present in the chunk summaries.',
+      'Use the supplied schema exactly.',
+    ].join(' '),
+    userText: [
+      `Project name: ${projectName}`,
+      `Study type: ${studyType || 'single-flow'}`,
+      `Participant: ${participantId}`,
+      `Session ID: ${sessionId || 'unknown'}`,
+      '',
+      'Research inputs / script context:',
+      normalizeWhitespace(studyContext || ''),
+      '',
+      'Chunk summaries:',
+      chunkSummaries
+        .map((item, index) =>
+          [
+            `Chunk ${index + 1}`,
+            `Summary: ${item.summary}`,
+            item.evidenceBullets?.length ? `Evidence bullets: ${item.evidenceBullets.join(' | ')}` : null,
+            item.notableQuotes?.length ? `Notable quotes: ${item.notableQuotes.join(' | ')}` : null,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        )
+        .join('\n\n'),
+    ].join('\n'),
+  });
+}
+
+async function prepareResearchContext({ apiKey, project, postProgress }) {
+  const rawContext = normalizeWhitespace(project.test_script || '');
+  if (!rawContext) {
+    return '';
+  }
+
+  const shouldCondense = project.study_type === 'moderated-test' || rawContext.length > 8000;
+  if (!shouldCondense) {
+    return rawContext;
+  }
+
+  await postProgress('Preparing condensed research context for GPT-5.4');
+
+  const digest = await callOpenAiStructured({
+    apiKey,
+    schemaName: 'research_context_digest',
+    schema: RESEARCH_CONTEXT_DIGEST_SCHEMA,
+    reasoningEffort: 'low',
+    systemText: [
+      'You are a senior UX researcher preparing a compact study brief from a long research script or background document.',
+      'Keep only the context needed for later transcript analysis.',
+      'Preserve the study goals and the most important focal research questions.',
+      'Use the supplied schema exactly.',
+    ].join(' '),
+    userText: [
+      `Project name: ${project.name}`,
+      `Study type: ${project.study_type || 'single-flow'}`,
+      '',
+      'Research script and context:',
+      rawContext,
+    ].join('\n'),
+  });
+
+  return [
+    `Study summary: ${normalizeWhitespace(digest.studySummary || '')}`,
+    cleanArray(digest.goals).length ? `Goals:\n- ${cleanArray(digest.goals).join('\n- ')}` : null,
+    cleanArray(digest.focalQuestions).length
+      ? `Focal questions:\n- ${cleanArray(digest.focalQuestions).join('\n- ')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+async function prepareTranscriptsForAnalysis({
+  apiKey,
+  project,
+  studyContext,
+  transcripts,
+  postProgress,
+}) {
+  const totalCharacters = transcripts.reduce(
+    (sum, transcript) => sum + String(transcript.transcript || '').length,
+    0
+  );
+  const shouldCondense =
+    project.study_type === 'moderated-test' || totalCharacters > 120000;
+
+  if (!shouldCondense) {
+    return transcripts;
+  }
+
+  const prepared = [];
+
+  for (let i = 0; i < transcripts.length; i += 1) {
+    const transcript = transcripts[i];
+    const participantId = transcript.participant_id || `participant-${i + 1}`;
+    const rawTranscript = normalizeWhitespace(transcript.transcript || '');
+
+    if (!rawTranscript) {
+      prepared.push(transcript);
+      continue;
+    }
+
+    const chunks = splitLargeTranscript(rawTranscript);
+    await postProgress(
+      `Preparing transcript digest ${i + 1} of ${transcripts.length} for ${participantId}`
+    );
+
+    if (chunks.length <= 1 && rawTranscript.length < 12000) {
+      prepared.push(transcript);
+      continue;
+    }
+
+    const chunkSummaries = [];
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+      await postProgress(
+        `Summarizing ${participantId} transcript chunk ${chunkIndex + 1} of ${chunks.length}`
+      );
+      const chunkSummary = await summarizeTranscriptChunk({
+        apiKey,
+        studyContext,
+        projectName: project.name,
+        studyType: project.study_type,
+        participantId,
+        sessionId: transcript.session_id,
+        chunkText: chunks[chunkIndex],
+        chunkIndex,
+        totalChunks: chunks.length,
+      });
+      chunkSummaries.push({
+        summary: normalizeWhitespace(chunkSummary.summary || ''),
+        evidenceBullets: cleanArray(chunkSummary.evidenceBullets).slice(0, 6),
+        notableQuotes: cleanArray(chunkSummary.notableQuotes).slice(0, 4).map((quote) => clipQuote(quote, 180)),
+      });
+    }
+
+    await postProgress(`Building participant digest for ${participantId}`);
+    const digest = await buildTranscriptDigest({
+      apiKey,
+      studyContext,
+      projectName: project.name,
+      studyType: project.study_type,
+      participantId,
+      sessionId: transcript.session_id,
+      chunkSummaries,
+    });
+
+    const digestText = [
+      `Participant digest: ${clipText(normalizeWhitespace(digest.participantSummary || ''), 1200)}`,
+      cleanArray(digest.evidenceBullets).length
+        ? `Evidence bullets:\n- ${cleanArray(digest.evidenceBullets)
+            .slice(0, 6)
+            .map((bullet) => clipText(bullet, 180))
+            .join('\n- ')}`
+        : null,
+      cleanArray(digest.notableQuotes).length
+        ? `Notable quotes:\n- ${cleanArray(digest.notableQuotes)
+            .slice(0, 3)
+            .map((quote) => `"${clipQuote(quote, 180)}"`)
+            .join('\n- ')}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    prepared.push({
+      ...transcript,
+      transcript: digestText,
+    });
+  }
+
+  return prepared;
+}
+
+async function generateAiFindingsSynthesis({
+  apiKey,
+  project,
+  transcripts,
+  questionAnalyses,
+  progressLog,
+}) {
+  const transcriptSummary = transcripts
+    .map((transcript, index) => {
+      const participantId = transcript.participant_id || `participant-${index + 1}`;
+      return `- ${participantId}: ${clipText(transcript.transcript || '', 320)}`;
+    })
+    .join('\n');
+
+  return callOpenAiStructured({
+    apiKey,
+    schemaName: 'analysis_findings',
+    schema: FINDINGS_RESPONSE_SCHEMA,
+    reasoningEffort: 'medium',
+    systemText: [
+      'You are a senior UX researcher writing report-ready findings from an existing question-by-question cross-reference analysis.',
+      'Use the saved cross-reference analysis as the primary evidence layer.',
+      'Use the research script and raw transcript snippets as supporting context, not as a reason to rewrite the whole study structure.',
+      'Return only strong, decision-oriented findings grounded in repeated patterns across participants.',
+      'Do not reject the dataset globally unless the transcript content is actually empty or corrupted.',
+      'Use the supplied schema exactly.',
+    ].join(' '),
+    userText: [
+      'Generate 3-6 report-ready findings from the following research materials.',
+      '',
+      'Requirements:',
+      '- Use the question-by-question cross-reference analysis as the main evidence base.',
+      '- Findings should be suitable for the final research report.',
+      '- Make directional product and UX calls where the evidence supports them.',
+      '- Avoid restating every question individually.',
+      '- Do not produce global invalidation language.',
+      '',
+      `Project name: ${project.name}`,
+      `Study name: ${project.study_name}`,
+      `Study type: ${project.study_type || 'single-flow'}`,
+      `Transcript count: ${transcripts.length}`,
+      '',
+      'Research script:',
+      normalizeWhitespace(project.analysis_context || project.test_script || ''),
+      '',
+      'Cross-reference analysis:',
+      buildCrossReferenceContext(questionAnalyses),
+      '',
+      'Transcript snippets:',
+      transcriptSummary,
+      '',
+      `Progress so far: ${progressLog.join(' | ')}`,
+    ].join('\n'),
+  });
+}
+
+function normalizeAiFindings(parsed, project, questionAnalyses) {
+  const findings = Array.isArray(parsed.findings) ? parsed.findings : [];
+
+  if (findings.length === 0) {
+    return deriveFindings(
+      {
+        name: project.name,
+        studyType: project.study_type,
+      },
+      questionAnalyses
+    );
+  }
+
+  return findings
+    .map((finding) => ({
+      type: ['pain-point', 'delighter', 'insight', 'recommendation'].includes(finding.type)
+        ? finding.type
+        : 'insight',
+      title: String(finding.title || '').trim(),
+      description: normalizeWhitespace(finding.description || ''),
+      severity: ['critical', 'major', 'minor'].includes(finding.severity)
+        ? finding.severity
+        : 'major',
+      participantCount: Number(finding.participantCount) > 0 ? Number(finding.participantCount) : 0,
+      conditions: cleanArray(finding.conditions),
+      tags: cleanArray(finding.tags),
+    }))
+    .filter((finding) => finding.title && finding.description);
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -430,7 +1508,11 @@ async function main() {
   try {
     await postProgress('Loading project and transcript data');
 
-    const [{ data: project, error: projectError }, { data: transcripts, error: transcriptError }] =
+    const [
+      { data: project, error: projectError },
+      { data: transcripts, error: transcriptError },
+      { data: balancedAssignments, error: balancedAssignmentError },
+    ] =
       await Promise.all([
         supabase
           .from('projects')
@@ -442,6 +1524,10 @@ async function main() {
           .select('participant_id, session_id, transcript, condition')
           .eq('project_id', args.projectId)
           .order('created_at', { ascending: true }),
+        supabase
+          .from('balanced_comparison_assignments')
+          .select('participant_id, order_label')
+          .eq('project_id', args.projectId),
       ]);
 
     if (projectError || !project) {
@@ -450,74 +1536,99 @@ async function main() {
     if (transcriptError || !transcripts || transcripts.length === 0) {
       throw new Error(transcriptError?.message || 'No transcripts available for analysis');
     }
-
-    await sleep(300);
-    await postProgress('Extracting research questions from the script');
-
-    const questions = extractQuestions(project.test_script || '');
-    console.log(
-      JSON.stringify(
-        {
-          stage: 'analysis-guidance',
-          promptVersion: 'ux-researcher-designer-v2',
-          guidance: REPORT_WRITING_GUIDANCE,
-        },
-        null,
-        2
-      )
-    );
-    const questionAnalyses = [];
-
-    for (let index = 0; index < questions.length; index += 1) {
-      const questionText = questions[index];
-      await postProgress(`Analyzing ${questionText}`);
-      await sleep(150);
-
-      const participantNotes = transcripts.map((transcript) => {
-        const evidenceSections = selectEvidenceSections(questionText, transcript.transcript || '');
-        const summary = evidenceSections.join(' ').trim() || 'No direct evidence was captured for this participant.';
-        const participantId = transcript.participant_id || transcript.session_id;
-        return {
-          participantId,
-          sessionId: transcript.session_id,
-          condition: transcript.condition || null,
-          summary,
-          quote: clipQuote(evidenceSections[0] || transcript.transcript || ''),
-          transcriptReference: `${participantId}.md`,
-        };
-      });
-
-      questionAnalyses.push({
-        questionNumber: `Q${index + 1}`,
-        questionText,
-        summary: summarizeSections(questionText, participantNotes),
-        keyInsights: extractKeyInsights(participantNotes),
-        conditionBreakdown: buildConditionBreakdown(participantNotes),
-        citations: participantNotes
-          .filter((note) => note.quote)
-          .map((note) => ({
-            quote: note.quote,
-            participantId: note.participantId,
-            summary: note.summary,
-            condition: note.condition || undefined,
-            transcriptReference: note.transcriptReference,
-            sessionId: note.sessionId,
-          })),
-        participantCount: participantNotes.length,
-      });
+    if (balancedAssignmentError) {
+      throw new Error(balancedAssignmentError.message || 'Failed to load balanced comparison assignments');
     }
 
-    await postProgress('Synthesizing condition summaries');
-    const conditionSummaries = buildConditionSummaries(transcripts);
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        'Analysis requires GPT-5.4 via OPENAI_API_KEY. No fallback analysis is allowed because the model-backed reasoning path is required for accuracy.'
+      );
+    }
 
-    await postProgress('Generating lightweight research findings');
-    const findings = deriveFindings(
-      {
-        name: project.name,
-        studyType: project.study_type,
+    const normalizedAssignments = (balancedAssignments || []).map((assignment) => ({
+      participantId: String(assignment.participant_id || '').trim(),
+      orderLabel: assignment.order_label === 'B-A' ? 'B-A' : 'A-B',
+    }));
+
+    if (project.study_type === 'balanced-comparison') {
+      const transcriptParticipants = [
+        ...new Set(transcripts.map((transcript) => String(transcript.participant_id || '').trim()).filter(Boolean)),
+      ];
+      const assignmentParticipants = new Set(
+        normalizedAssignments.map((assignment) => assignment.participantId)
+      );
+      const missingParticipants = transcriptParticipants.filter(
+        (participantId) => !assignmentParticipants.has(participantId)
+      );
+
+      if (missingParticipants.length > 0) {
+        throw new Error(
+          `Balanced comparison analysis requires participant order assignments for every transcript. Missing: ${missingParticipants.join(', ')}`
+        );
+      }
+    }
+
+    let questionAnalyses = [];
+    let conditionSummaries = [];
+    let findings = [];
+
+    await sleep(300);
+    await postProgress('Preparing script and transcript evidence for GPT-5.4');
+
+    const studyContext = await prepareResearchContext({
+      apiKey,
+      project,
+      postProgress,
+    });
+
+    const analysisTranscripts = await prepareTranscriptsForAnalysis({
+      apiKey,
+      project,
+      studyContext,
+      transcripts,
+      postProgress,
+    });
+
+    await postProgress('Starting per-question, per-user analysis with GPT-5.4');
+
+    const crossReferenceResult = await generateAiCrossReferenceAnalysis({
+      apiKey,
+      project: {
+        ...project,
+        balancedAssignments: normalizedAssignments,
+        analysis_context: studyContext,
       },
-      questionAnalyses
+      transcripts: analysisTranscripts,
+      progressLog,
+      postProgress,
+    });
+
+    questionAnalyses = normalizeAiQuestionOutput(
+      crossReferenceResult,
+      analysisTranscripts,
+      crossReferenceResult.analysisTargets
     );
+    conditionSummaries = normalizeAiConditionSummaries(crossReferenceResult, analysisTranscripts);
+
+    await postProgress('Normalizing cross-reference analysis');
+    await postProgress('Synthesizing report-ready findings from cross-reference analysis');
+
+    const findingsResult = await generateAiFindingsSynthesis({
+      apiKey,
+      project: {
+        ...project,
+        analysis_context: studyContext,
+      },
+      transcripts: analysisTranscripts,
+      questionAnalyses,
+      progressLog,
+    });
+
+    findings = normalizeAiFindings(findingsResult, project, questionAnalyses);
+
+    await postProgress('Finalizing analysis output');
 
     await postAnalysisResults(args.appUrl, args.projectId, {
       analysisRunId: args.analysisRunId,

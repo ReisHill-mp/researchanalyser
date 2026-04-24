@@ -26,10 +26,11 @@ import {
 import type { ProjectStatus, StudyType, Project } from '@/lib/types'
 
 const studyTypeLabels: Record<StudyType, string> = {
-  'single-flow': 'Single Flow',
+  'single-flow': 'Unmoderated',
   'concept-test': 'Concept Test',
-  'balanced-comparison': 'Balanced Comparison',
+  'balanced-comparison': 'Unmoderated Balanced Comparison',
   'ab-comparison': 'A/B Comparison',
+  'moderated-test': 'Moderated',
   'within-subject': 'Within-Subject',
   'between-subject': 'Between-Subject',
 }
@@ -120,7 +121,9 @@ export function ProjectsList() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
-            <SelectItem value="single-flow">Single Flow</SelectItem>
+            <SelectItem value="single-flow">Unmoderated</SelectItem>
+            <SelectItem value="balanced-comparison">Unmoderated Balanced Comparison</SelectItem>
+            <SelectItem value="moderated-test">Moderated</SelectItem>
             <SelectItem value="concept-test">Concept Test</SelectItem>
             <SelectItem value="ab-comparison">A/B Comparison</SelectItem>
             <SelectItem value="within-subject">Within-Subject</SelectItem>
@@ -147,7 +150,7 @@ export function ProjectsList() {
                 Transcripts
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Team
+                User
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Updated
@@ -190,7 +193,7 @@ export function ProjectsList() {
                 <td className="px-4 py-4">
                   <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
                     <Users className="h-4 w-4" />
-                    {project.team.length}
+                    {project.ownerName || 'Unknown'}
                   </div>
                 </td>
                 <td className="px-4 py-4">

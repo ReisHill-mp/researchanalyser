@@ -34,10 +34,20 @@ export async function POST(
       return NextResponse.json({ error: 'Project ID required' }, { status: 400 })
     }
 
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        {
+          error:
+            'Analysis requires GPT-5.4 via OPENAI_API_KEY. It cannot be completed right now because the OpenAI API key is not configured for this environment.',
+        },
+        { status: 400 }
+      )
+    }
+
     const supabase = createClient()
     const { data: project, error: projectError } = await supabase
       .from('projects')
-      .select('id, test_script')
+      .select('id, test_script, study_type')
       .eq('id', projectId)
       .single()
 
@@ -45,16 +55,60 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    const { count: transcriptCount, error: transcriptError } = await supabase
+    const { data: transcripts, error: transcriptError } = await supabase
       .from('transcripts')
-      .select('id', { count: 'exact', head: true })
+      .select('participant_id')
       .eq('project_id', projectId)
 
-    if (transcriptError || !transcriptCount) {
+    if (transcriptError || !transcripts || transcripts.length === 0) {
       return NextResponse.json(
         { error: 'No transcripts available yet. Import transcripts before running analysis.' },
         { status: 400 }
       )
+    }
+
+    if (project.study_type === 'balanced-comparison') {
+      const transcriptParticipants = [
+        ...new Set(
+          transcripts
+            .map((transcript) => String(transcript.participant_id || '').trim())
+            .filter(Boolean)
+        ),
+      ]
+
+      const { data: assignments, error: assignmentError } = await supabase
+        .from('balanced_comparison_assignments')
+        .select('participant_id')
+        .eq('project_id', projectId)
+
+      if (assignmentError) {
+        return NextResponse.json(
+          {
+            error: 'Failed to load balanced comparison assignments',
+            details: assignmentError.message,
+          },
+          { status: 500 }
+        )
+      }
+
+      const assignmentParticipants = new Set(
+        (assignments || []).map((assignment) => String(assignment.participant_id || '').trim())
+      )
+
+      const missingParticipants = transcriptParticipants.filter(
+        (participantId) => !assignmentParticipants.has(participantId)
+      )
+
+      if (missingParticipants.length > 0) {
+        return NextResponse.json(
+          {
+            error:
+              'Balanced comparison analysis cannot run until every transcript participant has an A → B or B → A order assignment.',
+            details: `Missing assignments for: ${missingParticipants.join(', ')}`,
+          },
+          { status: 400 }
+        )
+      }
     }
 
     const { data: analysisRun, error: createError } = await supabase
@@ -62,8 +116,8 @@ export async function POST(
       .insert({
         project_id: projectId,
         status: 'queued',
-        model_version: 'local-research-synthesizer',
-        prompt_version: 'ux-researcher-designer-v1',
+        model_version: 'gpt-5.4',
+        prompt_version: 'ux-researcher-designer-v5',
         current_step: 'Queued',
         progress_log: ['Queued analysis run'],
       })
@@ -100,9 +154,17 @@ export async function POST(
           cwd: process.cwd(),
           env: process.env,
           detached: true,
-          stdio: 'ignore',
+          stdio: ['ignore', 'pipe', 'pipe'],
         }
       )
+
+      child.stdout?.on('data', (chunk) => {
+        console.log(`[analysis:${projectId}] ${chunk.toString().trim()}`)
+      })
+
+      child.stderr?.on('data', (chunk) => {
+        console.error(`[analysis:${projectId}] ${chunk.toString().trim()}`)
+      })
 
       child.unref()
     }

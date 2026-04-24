@@ -177,6 +177,21 @@ async function postProgress(appUrl, projectId, progressLog, progress) {
   });
 }
 
+async function postFailure(appUrl, projectId, errorMessage, progressLog = [], currentStep = 'Import failed') {
+  try {
+    await postResults(appUrl, projectId, {
+      status: 'failed',
+      errorMessage,
+      currentStep,
+      progressLog,
+    });
+  } catch (error) {
+    console.error(
+      `Failed to report import failure: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -243,8 +258,9 @@ async function runExporterWithProgress(args) {
   let cancelled = false;
 
   const handleProgress = async (progress) => {
-    progressLog.push(progress.message || `Capturing ${progress.currentUser}...`);
-    console.log(progress.message || `Capturing ${progress.currentUser}...`);
+    const message = progress.message || `Capturing ${progress.currentUser}...`;
+    progressLog.push(message);
+    console.log(message);
 
     const status = await fetchImportStatus(args.appUrl, args.projectId);
     if (status?.importRun?.status === 'failed' && status.importRun?.error_message === 'Cancelled by user') {
@@ -298,9 +314,7 @@ async function runExporterWithProgress(args) {
   return finalResult;
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-
+async function main(args) {
   if (!args.projectId || !args.out) {
     usage();
     process.exit(1);
@@ -313,10 +327,23 @@ async function main() {
   }
 
   fs.mkdirSync(outputDir, { recursive: true });
+  const progressLog = [];
 
   if (!args.skipExport) {
     const sessionsUrl = await resolveSessionsUrl(args);
+    progressLog.push('Opening UserTesting sessions page');
+    await postProgress(args.appUrl, args.projectId, progressLog, {
+      currentStep: 'Opening UserTesting sessions page',
+      currentUser: '',
+      completed: 0,
+    });
     await openSessionsPage(sessionsUrl);
+    progressLog.push('Waiting for transcript exporter');
+    await postProgress(args.appUrl, args.projectId, progressLog, {
+      currentStep: 'Waiting for transcript exporter',
+      currentUser: '',
+      completed: 0,
+    });
     console.log(`Running transcript exporter into ${outputDir}...`);
     await runExporterWithProgress({ ...args, out: outputDir });
   }
@@ -332,7 +359,15 @@ async function main() {
   console.log(JSON.stringify(result, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+const parsedArgs = parseArgs(process.argv.slice(2));
+
+main(parsedArgs).catch(async (error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(message);
+
+  if (parsedArgs.projectId) {
+    await postFailure(parsedArgs.appUrl, parsedArgs.projectId, message);
+  }
+
   process.exit(1);
 });

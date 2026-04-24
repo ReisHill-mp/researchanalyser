@@ -4,6 +4,7 @@ import type { NextRequest } from 'next/server'
 interface AnalysisQuestionPayload {
   questionNumber: string
   questionText: string
+  feedbackGroup?: string
   summary: string
   keyInsights: string[]
   conditionBreakdown: Record<string, string>
@@ -153,6 +154,7 @@ export async function POST(
       analysis_run_id: analysisRunId,
       question_number: question.questionNumber,
       question_text: question.questionText,
+      feedback_group: question.feedbackGroup ?? null,
       summary: question.summary,
       key_insights: question.keyInsights,
       condition_breakdown: question.conditionBreakdown,
@@ -251,6 +253,24 @@ export async function POST(
           }
         }
       }
+    }
+
+    const { error: projectStatusError } = await supabase
+      .from('projects')
+      .update({
+        status: 'complete',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', projectId)
+
+    if (projectStatusError) {
+      return Response.json(
+        {
+          error: 'Analysis was saved but failed to update project status',
+          details: projectStatusError.message,
+        },
+        { status: 500 }
+      )
     }
 
     return Response.json({

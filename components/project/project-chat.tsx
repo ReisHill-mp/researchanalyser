@@ -52,6 +52,7 @@ export function ProjectChat({ project }: ProjectChatProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [contextLoading, setContextLoading] = useState(true)
   const [context, setContext] = useState<ProjectContext>({ findings: [], transcripts: [], analysis: null })
+  const [chatError, setChatError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Fetch project context on mount
@@ -129,182 +130,6 @@ ${context.findings.length > 0
     'How confident are we in the findings?',
   ]
 
-  // Generate grounded response based on real project data
-  const generateResponse = (query: string): ChatMessage => {
-    const lowerQuery = query.toLowerCase()
-    const painPoints = context.findings.filter(f => f.type === 'pain-point')
-    const delighters = context.findings.filter(f => f.type === 'delighter')
-    const participantIds = context.transcripts.map(t => t.participantId).slice(0, 6)
-    const conditions = [...new Set(context.transcripts.map(t => t.condition).filter(Boolean))]
-
-    // Check for finding-specific questions
-    const matchedFinding = context.findings.find(f => 
-      lowerQuery.includes(f.title.toLowerCase()) || 
-      lowerQuery.includes(f.title.split(' ').slice(0, 3).join(' ').toLowerCase())
-    )
-
-    if (matchedFinding) {
-      return {
-        id: String(Date.now() + 1),
-        role: 'assistant',
-        content: `**${matchedFinding.title}**
-
-${matchedFinding.description}
-
-**Type:** ${matchedFinding.type === 'pain-point' ? 'Pain Point' : matchedFinding.type === 'delighter' ? 'Delighter' : 'Observation'}
-${matchedFinding.severity ? `**Severity:** ${matchedFinding.severity}` : ''}
-${matchedFinding.category ? `**Category:** ${matchedFinding.category}` : ''}
-
-This finding was identified through analysis of ${project.transcriptCount} transcripts from ${project.participantCount} participants in this ${studyTypeLabels[project.studyType] || project.studyType} study.`,
-        participantCount: project.participantCount,
-        conditionCoverage: conditions.length > 0 ? conditions as string[] : undefined,
-        confidence: matchedFinding.severity === 'critical' ? 'high' : 'medium',
-      }
-    }
-
-    // Pain points question
-    if (lowerQuery.includes('pain') || lowerQuery.includes('issue') || lowerQuery.includes('problem')) {
-      if (painPoints.length === 0) {
-        return {
-          id: String(Date.now() + 1),
-          role: 'assistant',
-          content: `No pain points have been identified yet in this ${studyTypeLabels[project.studyType] || project.studyType} study.
-
-The study has analyzed ${project.transcriptCount} transcripts from ${project.participantCount} participants, but findings categorized as pain points have not been recorded.
-
-Would you like me to help with something else about this study?`,
-          participantCount: project.participantCount,
-          confidence: 'medium',
-        }
-      }
-
-      return {
-        id: String(Date.now() + 1),
-        role: 'assistant',
-        content: `**Pain Points Identified (${painPoints.length} total)**
-
-${painPoints.slice(0, 5).map((f, i) => `${i + 1}. **${f.title}**${f.severity ? ` (${f.severity})` : ''}
-   ${f.description}`).join('\n\n')}
-
-${painPoints.length > 5 ? `\n_...and ${painPoints.length - 5} more pain points identified._` : ''}
-
-These findings were identified across ${project.transcriptCount} transcripts from ${project.participantCount} participants.`,
-        citations: participantIds,
-        participantCount: project.participantCount,
-        conditionCoverage: conditions.length > 0 ? conditions as string[] : undefined,
-        confidence: painPoints.some(p => p.severity === 'critical') ? 'high' : 'medium',
-      }
-    }
-
-    // Participant count question
-    if (lowerQuery.includes('participant') || lowerQuery.includes('how many')) {
-      return {
-        id: String(Date.now() + 1),
-        role: 'assistant',
-        content: `**Study Participants**
-
-This ${studyTypeLabels[project.studyType] || project.studyType} study includes:
-
-- **${project.participantCount} participants** total
-- **${project.transcriptCount} transcripts** analyzed
-- **${project.findingsCount} findings** identified
-
-${conditions.length > 0 ? `**Conditions:** ${conditions.join(', ')}` : ''}
-
-${context.transcripts.length > 0 ? `Recent participant IDs: ${participantIds.join(', ')}` : ''}`,
-        participantCount: project.participantCount,
-        conditionCoverage: conditions.length > 0 ? conditions as string[] : undefined,
-        confidence: 'high',
-      }
-    }
-
-    // Confidence question
-    if (lowerQuery.includes('confident') || lowerQuery.includes('confidence')) {
-      const confidenceLevel = project.transcriptCount >= 20 ? 'High' : project.transcriptCount >= 10 ? 'Medium' : 'Low'
-      return {
-        id: String(Date.now() + 1),
-        role: 'assistant',
-        content: `**Confidence Assessment: ${confidenceLevel}**
-
-Based on the study data:
-
-- **Sample size:** ${project.participantCount} participants
-- **Transcripts analyzed:** ${project.transcriptCount}
-- **Findings generated:** ${project.findingsCount}
-- **Study type:** ${studyTypeLabels[project.studyType] || project.studyType}
-
-${confidenceLevel === 'High' 
-  ? 'The sample size is adequate for this type of evaluative study, and consistent patterns were observed across participants.'
-  : confidenceLevel === 'Medium'
-  ? 'The sample size provides reasonable confidence, though additional participants would strengthen the findings.'
-  : 'The sample size is limited. Consider additional participants to increase confidence in findings.'}
-
-${context.analysis?.modelVersion ? `\n**Analysis Model:** ${context.analysis.modelVersion}` : ''}
-${context.analysis?.promptVersion ? `**Prompt Version:** ${context.analysis.promptVersion}` : ''}`,
-        participantCount: project.participantCount,
-        confidence: confidenceLevel.toLowerCase() as 'high' | 'medium' | 'low',
-      }
-    }
-
-    // Findings overview
-    if (lowerQuery.includes('finding') || lowerQuery.includes('insight')) {
-      if (context.findings.length === 0) {
-        return {
-          id: String(Date.now() + 1),
-          role: 'assistant',
-          content: `No findings have been generated yet for this study.
-
-The study "${project.studyName}" has ${project.transcriptCount} transcripts from ${project.participantCount} participants, but analysis findings have not been recorded.
-
-Run the analysis to generate findings from your validated transcripts.`,
-          participantCount: project.participantCount,
-          confidence: 'medium',
-        }
-      }
-
-      return {
-        id: String(Date.now() + 1),
-        role: 'assistant',
-        content: `**Findings Overview (${context.findings.length} total)**
-
-${context.findings.slice(0, 4).map(f => `- **${f.title}** (${f.type})${f.severity ? ` — ${f.severity}` : ''}`).join('\n')}
-
-${context.findings.length > 4 ? `\n_...and ${context.findings.length - 4} more findings._` : ''}
-
-**Breakdown:**
-- Pain Points: ${painPoints.length}
-- Delighters: ${delighters.length}
-- Observations: ${context.findings.filter(f => f.type === 'observation').length}
-
-Ask me about any specific finding to learn more.`,
-        citations: participantIds,
-        participantCount: project.participantCount,
-        conditionCoverage: conditions.length > 0 ? conditions as string[] : undefined,
-        confidence: 'high',
-      }
-    }
-
-    // Default response grounded in project data
-    return {
-      id: String(Date.now() + 1),
-      role: 'assistant',
-      content: `Based on analysis of the **${project.name}** study:
-
-${context.findings.length > 0 
-  ? `This ${studyTypeLabels[project.studyType] || project.studyType} study analyzed ${project.transcriptCount} transcripts from ${project.participantCount} participants and identified ${project.findingsCount} findings.
-
-**Key findings include:**
-${context.findings.slice(0, 3).map(f => `- ${f.title}`).join('\n')}`
-  : `This study has ${project.transcriptCount} transcripts from ${project.participantCount} participants. Run analysis to generate findings.`}
-
-Would you like me to dive deeper into any specific aspect of the study?`,
-      citations: participantIds.length > 0 ? participantIds : undefined,
-      participantCount: project.participantCount,
-      conditionCoverage: conditions.length > 0 ? conditions as string[] : undefined,
-      confidence: context.findings.length > 0 ? 'medium' : 'low',
-    }
-  }
-
   const handleSend = async (question?: string) => {
     const query = question || input.trim()
     if (!query || isLoading) return
@@ -318,6 +143,7 @@ Would you like me to dive deeper into any specific aspect of the study?`,
     setMessages((prev) => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
+    setChatError(null)
 
     // Simulate AI response with typing indicator
     const loadingMessage: ChatMessage = {
@@ -328,14 +154,35 @@ Would you like me to dive deeper into any specific aspect of the study?`,
     }
     setMessages((prev) => [...prev, loadingMessage])
 
-    // Simulate response delay
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    try {
+      const response = await fetch(`/api/projects/${project.id}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: query }),
+      })
 
-    // Generate grounded response using real project data
-    const response = generateResponse(query)
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to generate grounded chat response')
+      }
 
-    setMessages((prev) => [...prev.slice(0, -1), response])
-    setIsLoading(false)
+      const assistantMessage: ChatMessage = {
+        id: String(Date.now() + 2),
+        role: 'assistant',
+        content: payload.answer || 'No answer returned.',
+        citations: payload.citations || [],
+        participantCount: payload.participantCount,
+        conditionCoverage: payload.conditionCoverage || [],
+        confidence: payload.confidence || 'medium',
+      }
+
+      setMessages((prev) => [...prev.slice(0, -1), assistantMessage])
+    } catch (error) {
+      setMessages((prev) => prev.slice(0, -1))
+      setChatError(error instanceof Error ? error.message : 'Failed to generate chat response')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -474,8 +321,11 @@ Would you like me to dive deeper into any specific aspect of the study?`,
               </Button>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Responses are grounded in {project.name} data ({project.transcriptCount} transcripts, {project.findingsCount} findings).
+              Responses are grounded only in the research script, transcripts, question-by-question analysis, and final report for this project.
             </p>
+            {chatError && (
+              <p className="text-xs text-destructive mt-2">{chatError}</p>
+            )}
           </form>
         </div>
       </div>

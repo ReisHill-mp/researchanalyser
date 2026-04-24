@@ -33,6 +33,7 @@ const studyTypeLabels: Record<StudyType, string> = {
   'concept-test': 'Concept Test',
   'balanced-comparison': 'Balanced Comparison',
   'ab-comparison': 'A/B Comparison',
+  'moderated-test': 'Moderated Test',
   'within-subject': 'Within-Subject',
   'between-subject': 'Between-Subject',
 }
@@ -79,6 +80,9 @@ export function ProjectOverview({ project }: ProjectOverviewProps) {
 
   const findingsCount = loadingFindings ? project.findingsCount : findings.length
   const topFindings = findings.slice(0, 3)
+  const participantCount = loadingTranscripts
+    ? project.participantCount
+    : new Set(transcripts.map((transcript) => transcript.participantId)).size
 
   return (
     <div className="p-6 space-y-6">
@@ -105,7 +109,7 @@ export function ProjectOverview({ project }: ProjectOverviewProps) {
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Participants</p>
             <p className="text-sm font-medium text-foreground mt-1 flex items-center gap-2">
               <Users className="h-4 w-4 text-muted-foreground" />
-              {project.participantCount}
+              {participantCount}
             </p>
           </div>
           <div>
@@ -171,7 +175,7 @@ export function ProjectOverview({ project }: ProjectOverviewProps) {
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Participants</p>
-              <p className="text-xl font-semibold text-foreground">{project.participantCount}</p>
+              <p className="text-xl font-semibold text-foreground">{participantCount}</p>
             </div>
           </div>
         </Card>

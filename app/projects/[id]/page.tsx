@@ -5,7 +5,6 @@ import { useParams, useSearchParams } from 'next/navigation'
 import { AppShell } from '@/components/app-shell'
 import { ProjectOverview } from '@/components/project/project-overview'
 import { ProjectMaterials } from '@/components/project/project-materials'
-import { ConditionMatrix } from '@/components/project/condition-matrix'
 import { ProjectAnalysis } from '@/components/project/project-analysis'
 import { ProjectReport } from '@/components/project/project-report'
 import { ProjectChat } from '@/components/project/project-chat'
@@ -13,7 +12,6 @@ import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
   FileText,
-  Table2,
   BarChart3,
   FileOutput,
   MessageSquare,
@@ -21,14 +19,17 @@ import {
 } from 'lucide-react'
 import type { Project } from '@/lib/types'
 
-const tabs = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'materials', label: 'Materials', icon: FileText },
-  { id: 'matrix', label: 'Condition Matrix', icon: Table2 },
-  { id: 'analysis', label: 'Analysis', icon: BarChart3 },
-  { id: 'report', label: 'Report', icon: FileOutput },
-  { id: 'chat', label: 'Chat', icon: MessageSquare },
-]
+function getProjectTabs(studyType?: Project['studyType']) {
+  const isModerated = studyType === 'moderated-test'
+
+  return [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'materials', label: 'Materials', icon: FileText },
+    { id: 'analysis', label: isModerated ? 'Research Analysis' : 'Analysis', icon: BarChart3 },
+    { id: 'report', label: 'Report', icon: FileOutput },
+    { id: 'chat', label: 'Chat', icon: MessageSquare },
+  ]
+}
 
 export default function ProjectDetailPage() {
   const params = useParams()
@@ -72,10 +73,11 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     const requestedTab = searchParams.get('tab')
+    const tabs = getProjectTabs(project?.studyType)
     if (requestedTab && tabs.some((tab) => tab.id === requestedTab)) {
       setActiveTab(requestedTab)
     }
-  }, [searchParams])
+  }, [searchParams, project?.studyType])
 
   const renderTabContent = () => {
     if (!project) return null
@@ -85,8 +87,6 @@ export default function ProjectDetailPage() {
         return <ProjectOverview project={project} />
       case 'materials':
         return <ProjectMaterials />
-      case 'matrix':
-        return <ConditionMatrix />
       case 'analysis':
         return <ProjectAnalysis />
       case 'report':
@@ -97,6 +97,8 @@ export default function ProjectDetailPage() {
         return null
     }
   }
+
+  const tabs = getProjectTabs(project?.studyType)
 
   if (loading) {
     return (
