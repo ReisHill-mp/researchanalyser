@@ -40,12 +40,14 @@ After seeding:
 
 ## Environment Variables
 
-The following environment variables are already set up through Vercel's Supabase integration:
+Copy `.env.example` to `.env.local` and replace the placeholder values:
 
 - `NEXT_PUBLIC_SUPABASE_URL` - Your Supabase project URL
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Anonymous key for client-side operations
-- `SUPABASE_SERVICE_ROLE_KEY` - Service role key for server-side operations
-- `POSTGRES_URL` - Database connection string
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Anonymous key for browser/client-side Supabase operations
+- `SUPABASE_SERVICE_ROLE_KEY` - Service role key for server-side imports, local scripts, and seed data
+- `OPENAI_API_KEY` - Required for AI analysis, project chat, and AI-regenerated reports
+
+The app also supports `SUPABASE_URL` and `SUPABASE_ANON_KEY` as optional compatibility aliases. `POSTGRES_URL` can be kept locally if copied from Vercel/Supabase, but the app does not read it directly.
 
 ## Project Table Schema
 
